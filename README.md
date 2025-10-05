@@ -1,1 +1,1 @@
-# Seiyo-academy
+# seiyo-academy
