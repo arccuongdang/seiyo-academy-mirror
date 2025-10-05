@@ -40,15 +40,19 @@ export default function QuestionDetail() {
 
   useEffect(() => {
     const url = `/data/${course}/${year}/${subject}.csv`;
-    Papa.parse<Row>(url, {
+
+    Papa.parse(url, {
       header: true,
       download: true,
       skipEmptyLines: true,
-      complete: (res) => setRows((res.data || []) as Row[]),
+      complete: (res: { data?: Row[] }) => {
+        setRows(res.data ?? []);
+      },
     });
   }, [course, subject, year]);
 
   const item = useMemo(() => rows.find((r) => r.q === q), [rows, q]);
+
   if (!item) {
     return <main className="p-6">Đang tải hoặc không tìm thấy câu hỏi…</main>;
   }
