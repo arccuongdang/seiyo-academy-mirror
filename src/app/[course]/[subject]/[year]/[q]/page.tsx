@@ -49,8 +49,9 @@ export default function QuestionDetail() {
   }, [course, subject, year]);
 
   const item = useMemo(() => rows.find((r) => r.q === q), [rows, q]);
-  if (!item)
+  if (!item) {
     return <main className="p-6">Đang tải hoặc không tìm thấy câu hỏi…</main>;
+  }
 
   const choices: { key: ChoiceKey; text?: string; image?: string }[] = [
     { key: "A", text: item.choiceAText, image: item.choiceAImage },
@@ -83,7 +84,10 @@ export default function QuestionDetail() {
           />
         </div>
       )}
-      {item.questionText && <p className="text-gray-800">{item.questionText}</p>}
+
+      {item.questionText && (
+        <p className="text-gray-800">{item.questionText}</p>
+      )}
 
       <section className="space-y-3">
         {choices.map((c) => (
@@ -93,9 +97,7 @@ export default function QuestionDetail() {
             className={
               "w-full text-left border rounded-lg p-3 hover:bg-neutral-50" +
               (picked && c.key === item.answer ? " border-emerald-300" : "") +
-              (picked &&
-              picked === c.key &&
-              picked !== item.answer
+              (picked && picked === c.key && picked !== item.answer
                 ? " border-rose-300"
                 : "")
             }
@@ -122,3 +124,21 @@ export default function QuestionDetail() {
             "p-3 rounded-lg border" +
             (picked === item.answer
               ? " bg-emerald-50 border-emerald-200"
+              : " bg-rose-50 border-rose-200")
+          }
+        >
+          {picked === item.answer
+            ? "✅ Chính xác!"
+            : `❌ Sai. Đáp án đúng: ${item.answer}`}
+        </div>
+      )}
+
+      {item.explanation && (
+        <section className="p-4 rounded-lg bg-emerald-50 border border-emerald-200">
+          <h3 className="font-semibold mb-1">Giải thích</h3>
+          <p>{item.explanation}</p>
+        </section>
+      )}
+    </main>
+  );
+}
