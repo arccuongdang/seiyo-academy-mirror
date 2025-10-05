@@ -1,0 +1,4 @@
+"id,year,subject,q,questionText,questionImage,choiceAText,choiceAImage,choiceBText,choiceBImage,choiceCText,choiceCImage,choiceDText,choiceDImage,answer,explanation"
+"Q01,2016,thietke,1,""C?u t?o chi ti?t n?o l? ..."",,,""/images/questions/2016/thietke/Q01-A.jpg"",, ""/images/questions/2016/thietke/Q01-B.jpg"",, ""/images/questions/2016/thietke/Q01-C.jpg"",, ""/images/questions/2016/thietke/Q01-D.jpg"",B,""??p ?n B v?..."""
+"Q02,2016,thietke,2,""D?a tr?n h?nh minh h?a, ch?n ph?t bi?u ??ng"",""/images/questions/2016/thietke/Q02.jpg"",""Ph?t bi?u A"",,""Ph?t bi?u B"",,""Ph?t bi?u C"",,""Ph?t bi?u D"",,A,""Gi?i th?ch ng?n..."""
+"Q03,2016,thietke,3,""Theo ti?u chu?n ..., l?a ch?n n?o ??ng"",, ""PA hinge"",,""Fire-rated gasket"",,""Regular latch"",,""Non-rated core"",,B,""..."""

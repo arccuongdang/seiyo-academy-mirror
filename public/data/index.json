@@ -1,0 +1,16 @@
+{
+  "courses": [
+    {
+      "slug": "2k-kientruc",
+      "name": "2級建築士コース",
+      "subjects": ["thietke", "luat", "ketcau", "thicong"],
+      "years": [2016,2017,2018,2019,2020,2021,2022,2023,2024,2025]
+    },
+    {
+      "slug": "tokutei2",
+      "name": "特定技能2号",
+      "subjects": ["thietke", "luat", "ketcau", "thicong"],
+      "years": [2016,2017,2018,2019,2020,2021,2022,2023,2024,2025]
+    }
+  ]
+}
