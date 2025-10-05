@@ -1,2 +1,2 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+// global.d.ts
 declare module "papaparse";
