@@ -1,64 +1,105 @@
 'use client';
 
-import { useEffect, useState } from "react";
-import Papa from "papaparse";
-import Image from "next/image";
-import Link from "next/link";
-import { useParams } from "next/navigation"; // 👈
+import { useEffect, useState } from 'react';
+import Papa from 'papaparse';
+
+// Custom ParseResult type
+interface ParseResult<T> {
+  data: T[];
+  errors: Array<{ message: string; row: number; index?: number }>;
+  meta: {
+    delimiter: string;
+    linebreak: string;
+    aborted: boolean;
+    truncated: boolean;
+    cursor: number;
+  };
+}
+
+// Custom ParseError type
+interface ParseError {
+  message: string;
+  code?: string;
+  row?: number;
+}
 
 type Row = {
-  id: string; year: string; subject: string; q: string;
-  questionText?: string; questionImage?: string;
-  choiceAText?: string; choiceAImage?: string;
-  choiceBText?: string; choiceBImage?: string;
-  choiceCText?: string; choiceCImage?: string;
-  choiceDText?: string; choiceDImage?: string;
-  answer: "A"|"B"|"C"|"D"; explanation?: string;
+  id?: string;
+  question?: string;
+  answer?: string;
+  [key: string]: unknown;
 };
 
-export default function QuestionListPage() {
-  const { course, subject, year } = useParams<{ course: string; subject: string; year: string }>(); // 👈
+type PageProps = {
+  params: { course: string; subject: string; year: string };
+  searchParams?: { csv?: string };
+};
+
+export default function Page({ params, searchParams }: PageProps) {
+  const { course, subject, year } = params;
+
+  const csvUrl =
+    searchParams?.csv ??
+    `/data/${encodeURIComponent(course)}/${encodeURIComponent(subject)}/${encodeURIComponent(year)}.csv`;
+
   const [rows, setRows] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(true);
-  const csvUrl = `/data/${course}/${year}/${subject}.csv`;
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    Papa.parse<Row>(csvUrl, {
-      header: true, download: true, skipEmptyLines: true,
-      complete: (result) => {
-        const data = (result.data || []).filter(Boolean) as Row[];
-        data.sort((a, b) => Number(a.q) - Number(b.q));
+    setErr(null);
+
+    Papa.parse(csvUrl, {
+      header: true,
+      download: true,
+      skipEmptyLines: true,
+      complete: (result: ParseResult<Row>) => {
+        const data = (result.data ?? []).filter(Boolean) as Row[];
         setRows(data);
         setLoading(false);
       },
-      error: () => setLoading(false),
+      error: (error: ParseError) => {
+        setErr(error.message || 'CSV parse error');
+        setLoading(false);
+      },
     });
   }, [csvUrl]);
 
-  if (loading) return <main className="p-6">Đang tải dữ liệu…</main>;
-  if (!rows.length) return <main className="p-6">Không có dữ liệu cho {String(subject)}/{String(year)} ({String(course)})</main>;
+  if (loading) return <p style={{ padding: 16 }}>Đang tải dữ liệu…</p>;
+  if (err) return <p style={{ padding: 16, color: 'crimson' }}>Lỗi: {err}</p>;
 
   return (
-    <main className="mx-auto max-w-5xl p-6 space-y-6">
-      <h1 className="text-2xl font-bold">Đề {String(subject)} — {String(year)} ({String(course)})</h1>
-      <ul className="grid md:grid-cols-2 gap-6">
-        {rows.map((r) => (
-          <li key={r.id} className="border rounded-xl p-4">
-            {r.questionImage ? (
-              <div className="aspect-video relative mb-3 bg-neutral-100 rounded-lg">
-                <Image src={r.questionImage} alt={r.id} fill className="object-contain" sizes="50vw" />
-              </div>
-            ) : (
-              <p className="mb-3 line-clamp-3 text-sm text-gray-700">{r.questionText}</p>
-            )}
-            <div className="font-semibold mb-2">Câu {r.q}</div>
-            <Link className="text-blue-600 underline" href={`/${course}/${subject}/${year}/${r.q}`}>
-              Xem chi tiết
-            </Link>
-          </li>
-        ))}
-      </ul>
+    <main style={{ padding: 24 }}>
+      <h1>
+        {course} / {subject} / {year}
+      </h1>
+      {rows.length === 0 ? (
+        <p>Không có dữ liệu (kiểm tra đường dẫn CSV: <code>{csvUrl}</code>)</p>
+      ) : (
+        <table style={{ borderCollapse: 'collapse', width: '100%', marginTop: 12 }}>
+          <thead>
+            <tr>
+              {Object.keys(rows[0]).map((k) => (
+                <th key={k} style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: 8 }}>
+                  {k}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}>
+                {Object.keys(rows[0]).map((k) => (
+                  <td key={k} style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
+                    {String(r[k] ?? '')}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </main>
   );
 }
