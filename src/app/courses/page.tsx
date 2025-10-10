@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { loadManifest } from "@/lib/qa";
+import { loadManifest } from "@/lib/qa/excel";
 
 type Manifest = Record<string, Record<string, string[]>>;
 

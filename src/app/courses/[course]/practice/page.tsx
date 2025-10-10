@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { loadManifest } from "@/lib/qa";
+import { loadManifest } from "@/lib/qa/excel";
 import { formatJpEra } from "@/lib/qa/jpEra";
 
 export default function PracticeMenu({ params }: { params: { course: string } }) {
