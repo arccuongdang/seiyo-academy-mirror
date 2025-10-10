@@ -1,12 +1,12 @@
 import { getServerSession } from "next-auth";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import Link from "next/link";
 import SignOutButton from "@/components/SignOutButton";
 
 
 export default async function Home() {
-  const session = await getServerSession();
+  const session = await getServerSession(authOptions);
 
-  // ⛔ Nếu chưa đăng nhập → hiển thị trang login
   if (!session) {
     return (
       <main className="p-8 space-y-6 text-center">
@@ -22,7 +22,6 @@ export default async function Home() {
     );
   }
 
-  // ✅ Nếu đã đăng nhập → chuyển đến trang courses
   return (
     <main className="p-8 space-y-6 text-center">
       <h1 className="text-3xl font-bold mb-4">
@@ -37,13 +36,10 @@ export default async function Home() {
       >
         Vào danh sách khóa học
       </Link>
-      
-       {/* ✅ Nút đăng xuất thêm ở đây */}
-      <div className="mt-6">
+      {/* ✅ Thêm nút Đăng xuất ngay bên dưới */}
+      <div className="mt-4">
         <SignOutButton />
       </div>
-      
     </main>
   );
 }
-
