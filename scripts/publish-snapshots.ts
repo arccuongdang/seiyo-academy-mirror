@@ -55,6 +55,36 @@ type Question = {
 };
 
 // ---------- Helpers ----------
+function hasAnyContent(q: Partial<Question>): boolean {
+  const keysToCheck = [
+    "questionId","courseId","subjectId","examYear","difficulty",
+    "questionTextJA","questionTextVI","questionImage",
+    "option1TextJA","option1TextVI","option1Image","option1IsAnswer",
+    "option2TextJA","option2TextVI","option2Image","option2IsAnswer",
+    "option3TextJA","option3TextVI","option3Image","option3IsAnswer",
+    "option4TextJA","option4TextVI","option4Image","option4IsAnswer",
+    "option5TextJA","option5TextVI","option5Image","option5IsAnswer",
+    "explanationGeneralJA","explanationGeneralVI","explanationImage",
+    "status","version","AnswerIsOption","tags","sourceNote"
+  ];
+  return keysToCheck.some((k) => {
+    const v = (q as any)[k];
+    if (typeof v === "number") return true;
+    if (typeof v === "boolean") return true;
+    if (typeof v === "string") return v.trim() !== "";
+    return false;
+  });
+}
+
+function filterReadyRows(rows: Question[]): Question[] {
+  return rows.filter((r) => {
+    if (!hasAnyContent(r)) return false; // bỏ dòng trống
+    const st = String(r.status ?? "").trim().toUpperCase();
+    return st === "READY"; // chỉ giữ READY
+  });
+}
+
+
 function readSheet<T = any>(wb: XLSX.WorkBook, sheetName: string): T[] {
   const ws = wb.Sheets[sheetName];
   if (!ws) return [];
@@ -223,7 +253,11 @@ function writeJSON(filePath: string, data: any) {
   const subjects = readSheet<Subject>(wb, "Subjects");
   const questionsRaw = readSheet<Question>(wb, "Questions");
 
-  const { ok, errors } = validateQuestions(questionsRaw);
+  // Lọc chỉ giữ READY trước khi validate
+  const questionsReady = filterReadyRows(questionsRaw);
+
+  const { ok, errors } = validateQuestions(questionsReady);
+
   if (errors.length) {
     console.error("Validation errors:");
     errors.forEach((e) => console.error(" -", e));

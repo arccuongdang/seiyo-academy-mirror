@@ -41,3 +41,14 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# --- keep published data snapshots ---
+!public/snapshots/
+!public/snapshots/**
+
+# if you have a global `*.json` ignore rule, keep JSON inside snapshots:
+!public/snapshots/*.json
+!public/snapshots/**/*.json
+
+# only if you have a rule ignoring dotfiles like `.*`
+!public/snapshots/.gitkeep
