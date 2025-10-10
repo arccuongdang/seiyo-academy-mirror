@@ -1,15 +1,11 @@
-/* scripts/publish-snapshots.ts (v2 READY filter) */
+"use client";
 
-import fs from "node:fs";
-import path from "node:path";
+import { useRef, useState } from "react";
 import * as XLSX from "xlsx";
+import JSZip from "jszip";
+import { saveAs } from "file-saver";
 
-const ROOT = process.cwd();
-const EXCEL_PATH = path.join(ROOT, "data-source", "SeiyoQuestions.xlsx");
-const SNAPSHOTS_DIR = path.join(ROOT, "public", "snapshots");
-
-type Course = { courseId: string; courseNameJA?: string; courseNameVI?: string; active?: boolean; coverImage?: string; };
-type Subject = { subjectId: string; courseId: string; subjectNameJA?: string; subjectNameVI?: string; active?: boolean; };
+// ===== Types
 type Question = {
   questionId: string;
   courseId: string;
@@ -31,18 +27,12 @@ type Question = {
   explanationImage?: string;
   status?: string;
   version?: number | string;
-  AnswerIsOption?: number | string; // 1..5
+  AnswerIsOption?: number | string;
 };
+type Subject = { subjectId: string; courseId: string; subjectNameJA?: string; subjectNameVI?: string; active?: boolean };
+type Manifest = Record<string, Record<string, string[]>>;
 
-// ---- helpers
-function readSheet<T = any>(wb: XLSX.WorkBook, names: string[]): T[] {
-  for (const n of names) {
-    const ws = wb.Sheets[n];
-    if (ws) return XLSX.utils.sheet_to_json<T>(ws, { defval: "" });
-  }
-  return [];
-}
-
+// ===== Helpers
 function toBool(v: any): boolean | undefined {
   if (typeof v === "boolean") return v;
   if (typeof v === "number") return v !== 0;
@@ -90,7 +80,6 @@ function hasAnyContent(q: Partial<Question>): boolean {
     return false;
   });
 }
-
 function filterReadyRows(rows: Question[]): Question[] {
   return rows.filter((r) => {
     if (!hasAnyContent(r)) return false;
@@ -102,7 +91,6 @@ function filterReadyRows(rows: Question[]): Question[] {
 function applyAnswerFromIndex(q: Question & any) {
   const idx = toInt(q.AnswerIsOption); // 1..5
   if (!idx || idx < 1 || idx > 5) return;
-
   const flags = [
     toBool(q.option1IsAnswer),
     toBool(q.option2IsAnswer),
@@ -125,14 +113,12 @@ function normalizeQuestion(r: Question): Question {
   const q: any = { ...r };
   q.examYear = toYear4(q.examYear);
   q.difficulty = String(q.difficulty || "").toUpperCase();
-
   for (let i = 1; i <= 5; i++) {
     const k = `option${i}IsAnswer`;
     const b = toBool((q as any)[k]);
     if (typeof b !== "undefined") (q as any)[k] = b;
   }
   applyAnswerFromIndex(q);
-
   if (typeof q.version !== "undefined") {
     const v = toInt(q.version);
     if (typeof v !== "undefined") q.version = v;
@@ -189,53 +175,146 @@ function groupByCourseSubject(rows: Question[]) {
   return map;
 }
 
-function writeJSON(filePath: string, data: any) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
-  console.log("✓ wrote", path.relative(ROOT, filePath));
-}
+export default function AdminDataPage() {
+  const [fileName, setFileName] = useState<string>("");
+  const [subjectsCount, setSubjectsCount] = useState<number>(0);
+  const [questionsCount, setQuestionsCount] = useState<number>(0);
+  const [skippedCount, setSkippedCount] = useState<number>(0);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [zipBlob, setZipBlob] = useState<Blob | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-(function main() {
-  if (!fs.existsSync(EXCEL_PATH)) {
-    console.error("✗ Excel not found at:", EXCEL_PATH);
-    process.exit(1);
-  }
-  const wb = XLSX.readFile(EXCEL_PATH);
-  const subjects = readSheet<Subject>(wb, ["Subjects", "subjects"]);
-  const questionsRaw = readSheet<Question>(wb, ["Questions", "questions"]);
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFileName(f.name);
+    setErrors([]);
+    setZipBlob(null);
 
-  const questionsReady = filterReadyRows(questionsRaw);
-  const { ok, errors } = validateQuestions(questionsReady);
-  if (errors.length) {
-    console.error("Validation errors:");
-    errors.forEach((e) => console.error(" -", e));
-    process.exit(1);
-  }
+    const buf = await f.arrayBuffer();
+    const wb = XLSX.read(buf);
 
-  const manifest: Record<string, Record<string, string[]>> = {};
-  for (const s of subjects) {
-    if (!s.courseId || !s.subjectId) continue;
-    if (!manifest[s.courseId]) manifest[s.courseId] = {};
-    if (!manifest[s.courseId][s.subjectId]) manifest[s.courseId][s.subjectId] = [];
-  }
+    const subjects = XLSX.utils.sheet_to_json<Subject>(wb.Sheets["Subjects"] ?? {}, { defval: "" });
+    const wsQuestions = wb.Sheets["Questions"] ?? wb.Sheets["questions"] ?? {};
+    const questionsRaw = XLSX.utils.sheet_to_json<Question>(wsQuestions, { defval: "" });
 
-  const grouped = groupByCourseSubject(ok.map(normalizeQuestion));
-  const ts = Date.now();
-  for (const [courseId, subMap] of grouped) {
-    for (const [subjectId, list] of subMap) {
-      const payload = {
-        meta: { courseId, subjectId, count: list.length, generatedAt: ts },
-        items: list
-      };
-      const outFile = path.join(SNAPSHOTS_DIR, courseId, `${subjectId}-questions.v${ts}.json`);
-      writeJSON(outFile, payload);
+    const questionsReady = filterReadyRows(questionsRaw);
+    setSkippedCount(questionsRaw.length - questionsReady.length);
 
-      if (!manifest[courseId]) manifest[courseId] = {};
-      if (!manifest[courseId][subjectId]) manifest[courseId][subjectId] = [];
-      manifest[courseId][subjectId].unshift(`${subjectId}-questions.v${ts}.json`);
+    const { ok, errors } = validateQuestions(questionsReady);
+    setErrors(errors);
+    setSubjectsCount(subjects.length);
+    setQuestionsCount(ok.length);
+    if (errors.length) return;
+
+    // Build manifest skeleton
+    const manifest: Manifest = {};
+    for (const s of subjects) {
+      if (!s.courseId || !s.subjectId) continue;
+      if (!manifest[s.courseId]) manifest[s.courseId] = {};
+      if (!manifest[s.courseId][s.subjectId]) manifest[s.courseId][s.subjectId] = [];
     }
+
+    // Group & build snapshots
+    const grouped = groupByCourseSubject(ok.map(normalizeQuestion));
+    const ts = Date.now();
+    const zip = new JSZip();
+
+    for (const [courseId, subMap] of grouped) {
+      for (const [subjectId, list] of subMap) {
+        const payload = {
+          meta: { courseId, subjectId, count: list.length, generatedAt: ts },
+          items: list,
+        };
+        const filename = `${subjectId}-questions.v${ts}.json`;
+        const outPath = `public/snapshots/${courseId}/${filename}`;
+        zip.file(outPath, JSON.stringify(payload, null, 2));
+
+        if (!manifest[courseId]) manifest[courseId] = {};
+        if (!manifest[courseId][subjectId]) manifest[courseId][subjectId] = [];
+        manifest[courseId][subjectId].unshift(filename);
+      }
+    }
+
+    zip.file("public/snapshots/manifest.json", JSON.stringify(manifest, null, 2));
+    const content = await zip.generateAsync({ type: "blob" });
+    setZipBlob(content);
   }
 
-  writeJSON(path.join(SNAPSHOTS_DIR, "manifest.json"), manifest);
-  console.log("\nAll done. Commit & push the generated JSON files.");
-})();
+  function triggerFilePicker() {
+    if (inputRef.current && !fileName) inputRef.current.click();
+  }
+  function downloadZip() {
+    if (!zipBlob) return;
+    saveAs(zipBlob, "snapshots_publish.zip");
+  }
+
+  const filePicked = !!fileName;
+
+  return (
+    <main className="p-8 space-y-6">
+      <h1 className="text-2xl font-bold">Admin — Dữ liệu (Upload → Validate → Publish)</h1>
+
+      {/* Nút chọn file Excel kiểu vuông */}
+      <section className="space-y-3">
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".xlsx,.xls"
+          onChange={handleFile}
+          className="hidden"
+        />
+        <button
+          onClick={triggerFilePicker}
+          disabled={filePicked}
+          className={[
+            "w-full sm:w-auto px-4 py-3 rounded-md border font-medium",
+            filePicked ? "bg-gray-200 text-gray-600 cursor-not-allowed" : "bg-white hover:bg-gray-50"
+          ].join(" ")}
+          title={filePicked ? fileName : "Chọn file Excel ngân hàng câu hỏi"}
+        >
+          {filePicked ? fileName : "Chọn file Excel ngân hàng câu hỏi"}
+        </button>
+        {filePicked && (
+          <div className="text-sm text-gray-500">
+            Đã chọn: <b>{fileName}</b>
+          </div>
+        )}
+      </section>
+
+      {/* Kết quả */}
+      <section className="space-y-2">
+        <div className="text-lg font-semibold">Kết quả kiểm tra</div>
+        <div>Subjects: <b>{subjectsCount}</b></div>
+        <div>Questions (READY): <b>{questionsCount}</b></div>
+        <div>Bỏ qua (không READY / trống): <b>{skippedCount}</b></div>
+
+        {errors.length > 0 ? (
+          <div className="mt-2">
+            <div className="text-red-600 font-semibold">Lỗi ({errors.length}):</div>
+            <ul className="list-disc pl-6 text-red-600">
+              {errors.map((e, i) => <li key={i}>{e}</li>)}
+            </ul>
+            <div className="text-gray-600 mt-2">
+              Sửa lỗi trong Excel rồi upload lại để tiếp tục.
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="text-green-700">✔ Hợp lệ. Bạn có thể Publish.</div>
+            <button
+              onClick={downloadZip}
+              disabled={!zipBlob}
+              className="mt-2 px-4 py-2 rounded bg-black text-white disabled:opacity-50"
+            >
+              Tải về snapshots_publish.zip
+            </button>
+            <div className="text-sm text-gray-500 mt-1">
+              Giải nén và <code>git add</code> toàn bộ nội dung vào repo (đè <code>public/snapshots/**</code>) → commit &amp; push.
+            </div>
+          </>
+        )}
+      </section>
+    </main>
+  );
+}

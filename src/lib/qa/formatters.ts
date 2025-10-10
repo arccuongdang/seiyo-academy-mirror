@@ -1,10 +1,5 @@
 import type { QARenderItem, QuestionSnapshotItem, QAOption } from "./schema";
 
-export function pickJV(ja?: string, vi?: string): { ja?: string; vi?: string; display: string } {
-  const display = (vi && String(vi).trim()) || (ja && String(ja).trim()) || "";
-  return { ja, vi, display };
-}
-
 export function toQARenderItem(q: QuestionSnapshotItem): QARenderItem {
   const opts: QAOption[] = [];
   for (let i = 1; i <= 5; i++) {
