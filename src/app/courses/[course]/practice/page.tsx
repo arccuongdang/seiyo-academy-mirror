@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
-// ⛳️ Import TRỰC TIẾP thay vì "@/lib/qa"
+// ⛳️ Import TRỰC TIẾP
 import { loadManifest } from "@/lib/qa/excel";
 import { formatJpEra } from "@/lib/qa/jpEra";
 
