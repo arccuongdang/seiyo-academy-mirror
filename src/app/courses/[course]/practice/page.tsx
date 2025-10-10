@@ -1,28 +1,33 @@
-"use client";
+'use client';
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+
+// ⛳️ Import TRỰC TIẾP thay vì "@/lib/qa"
 import { loadManifest } from "@/lib/qa/excel";
 import { formatJpEra } from "@/lib/qa/jpEra";
 
 export default function PracticeMenu({ params }: { params: { course: string } }) {
   const { course } = params;
   const [manifest, setManifest] = useState<any | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     loadManifest()
       .then(setManifest)
-      .catch((err) => console.error("Failed to load manifest:", err));
+      .catch((e) => setErr(e?.message || "Không tải được manifest"));
   }, []);
 
-  if (!manifest) return <div className="p-8">Đang tải...</div>;
+  if (err) return <main className="p-8 text-red-600">Lỗi: {err}</main>;
+  if (!manifest) return <main className="p-8">Đang tải...</main>;
+
   const subjects = manifest[course] || {};
 
   return (
     <main className="p-8 space-y-8">
       <h1 className="text-2xl font-bold">Khóa {course} — Chọn đề</h1>
 
-      {/* Tab 1: 分野別 */}
+      {/* 分野別 */}
       <section>
         <h2 className="text-xl font-semibold mb-2">分野別 (Theo môn)</h2>
         <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
@@ -41,7 +46,7 @@ export default function PracticeMenu({ params }: { params: { course: string } })
         </div>
       </section>
 
-      {/* Tab 2: 年度別 */}
+      {/* 年度別 */}
       <section>
         <h2 className="text-xl font-semibold mb-2">年度別 (Theo năm)</h2>
         <div className="flex flex-wrap gap-2">
