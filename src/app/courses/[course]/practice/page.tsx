@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 
 // ⛳️ Import TRỰC TIẾP
-import { loadManifest } from "@/lib/qa/excel";
-import { formatJpEra } from "@/lib/qa/jpEra";
+import { loadManifest } from "../../../../lib/qa/excel";
+import { formatJpEra } from "../../../../lib/qa/jpEra";
 
 export default function PracticeMenu({ params }: { params: { course: string } }) {
   const { course } = params;

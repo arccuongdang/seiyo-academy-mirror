@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 
 // ⛳️ Import TRỰC TIẾP
-import { loadManifest } from "@/lib/qa/excel";
+import { loadManifest } from "../../../lib/qa/excel";
 
 type Manifest = Record<string, Record<string, string[]>>;
 
