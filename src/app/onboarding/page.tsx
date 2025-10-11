@@ -1,11 +1,15 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { db, requireUser, serverTimestamp } from '../../lib/firebase/client';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
-export default function OnboardingPage() {
+function OnboardingInner() {
   const router = useRouter();
+  const q = useSearchParams();
+  const reason = q.get('reason');
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -14,21 +18,21 @@ export default function OnboardingPage() {
   const [lastName, setLastName] = useState('');
   const [firstName, setFirstName] = useState('');
   const [birthYear, setBirthYear] = useState('');
-  const [gender, setGender] = useState(''); // optional
+  const [gender, setGender] = useState('');
 
   useEffect(() => {
     (async () => {
       try {
-        const u = await requireUser();
+        const u = await requireUser(); // nếu chưa login -> throw
         const ref = doc(db, 'users', u.uid);
         const snap = await getDoc(ref);
-        if (snap.exists()) {
-          // nếu đã hoàn tất hồ sơ → đưa về trang học
-          return router.push('/courses'); // chuyển hướng đến trang các môn học
+        if (snap.exists() && snap.data()?.profileComplete === true) {
+          router.replace('/courses');
+          return;
         }
       } catch (e: any) {
         if (e?.message === 'AUTH_REQUIRED') {
-          router.push('/signin');
+          router.replace('/signin');
           return;
         }
         setErr(e?.message || 'Error');
@@ -51,11 +55,11 @@ export default function OnboardingPage() {
         firstName: firstName.trim() || null,
         birthYear: birthYear.trim() || null,
         gender: gender || null,
-        createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
         profileComplete: true,
       }, { merge: true });
-      router.push('/courses/KTS2'); // điều hướng tới nơi bạn muốn bắt đầu học
+      router.push('/courses');
     } catch (e: any) {
       setErr(e?.message || 'Save failed');
     } finally {
@@ -68,8 +72,15 @@ export default function OnboardingPage() {
   return (
     <main style={{ padding: 24, maxWidth: 520 }}>
       <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 8 }}>はじめての設定 / Thiết lập lần đầu</h1>
+
+      {reason === 'need_profile' && (
+        <div style={{ padding: 12, border: '1px solid #fde68a', background: '#fffbeb', color: '#92400e', borderRadius: 8, marginBottom: 12 }}>
+          Cần điền đầy đủ thông tin cá nhân để bắt đầu khóa học.
+        </div>
+      )}
+
       <p style={{ color: '#667085', marginBottom: 12 }}>
-        Vui lòng điền **nickname** (bắt buộc) và thông tin cá nhân cơ bản (tùy chọn).
+        Vui lòng điền <b>nickname</b> (bắt buộc) và thông tin cơ bản (tùy chọn).
       </p>
 
       <div style={{ display: 'grid', gap: 10 }}>
@@ -112,5 +123,13 @@ export default function OnboardingPage() {
         {err && <div style={{ color: 'crimson' }}>{err}</div>}
       </div>
     </main>
+  );
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>Loading…</main>}>
+      <OnboardingInner />
+    </Suspense>
   );
 }
