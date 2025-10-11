@@ -1,19 +1,22 @@
-// src/app/signin/page.tsx
 'use client';
-import { useEffect, useState } from 'react';
+
+import React, { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { db, signInWithGoogle, signInWithEmail, signUpWithEmail, waitForUser } from '../../lib/firebase/client';
 import { doc, getDoc } from 'firebase/firestore';
 
-export default function SignInPage() {
+function SignInInner() {
   const router = useRouter();
   const q = useSearchParams();
   const mode = q.get('mode') || 'login'; // 'signup' | 'login'
-  const [email, setEmail] = useState(''); const [pwd, setPwd] = useState('');
-  const [err, setErr] = useState<string | null>(null); const [loading, setLoading] = useState(false);
 
+  const [email, setEmail] = useState('');
+  const [pwd, setPwd] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // Nếu đã đăng nhập từ trước, điều hướng theo hồ sơ
   useEffect(() => {
-    // Nếu đã đăng nhập từ trước, chuyển nhanh theo hồ sơ
     (async () => {
       const u = await waitForUser();
       if (!u) return;
@@ -81,5 +84,13 @@ export default function SignInPage() {
 
       {err && <div style={{ marginTop: 12, color: 'crimson' }}>{String(err)}</div>}
     </main>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>Loading…</main>}>
+      <SignInInner />
+    </Suspense>
   );
 }
