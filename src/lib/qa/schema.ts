@@ -28,8 +28,12 @@ export type SubjectSnapshot = {
 
 export type Manifest = Record<string, Record<string, string[]>>;
 
+
 export type QAOption = {
+  /** số thứ tự option 1..5 (nếu UI đang dùng) */
   key: number;
+  /** id ổn định (vd: "000123__opt1") để mapping đúng/sai sau khi shuffle */
+  id: string; // <-- BẮT BUỘC
   textJA?: string;
   textVI?: string;
   image?: string;
@@ -37,6 +41,7 @@ export type QAOption = {
   explanationJA?: string;
   explanationVI?: string;
 };
+
 
 export type QARenderItem = {
   id: string;

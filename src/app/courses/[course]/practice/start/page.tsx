@@ -9,7 +9,7 @@ import { loadManifest, pickLatestFile, loadSubjectSnapshot } from '@/lib/qa/exce
 import { toQARenderItems, shuffleOptions } from '@/lib/qa/formatters';
 import { gradeSingleChoice } from '@/lib/qa/grade';
 // Furigana
-import { toFuriganaHtml } from '@/lib/jp/kuroshiro';
+import { toFuriganaHtml } from '../../../../lib/jp/kuroshiro';
 // Types
 import type { QARenderItem, QAOption } from '@/lib/qa/schema';
 
