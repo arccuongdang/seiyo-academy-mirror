@@ -1,44 +1,43 @@
-import { getServerSession } from "next-auth";
-import { authOptions } from "./api/auth/[...nextauth]/route";
-import Link from "next/link";
-import SignOutButton from "../components/SignOutButton";
-
+// src/app/page.tsx
+import Link from 'next/link';
+import { redirect } from 'next/navigation';
+import { db, waitForUser } from '../lib/firebase/client';
+import { doc, getDoc } from 'firebase/firestore';
 
 export default async function Home() {
-  const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return (
-      <main className="p-8 space-y-6 text-center">
-        <h1 className="text-3xl font-bold mb-4">Seiyo Academy</h1>
-        <p className="text-gray-600 mb-6">Hệ thống học trực tuyến 二級建築士</p>
-        <Link
-          href="/login"
-          className="px-6 py-3 bg-black text-white rounded-lg hover:bg-gray-800"
-        >
-          Đăng nhập với Google
-        </Link>
-      </main>
-    );
+  // Server Component: kiểm tra đăng nhập và hồ sơ
+  const user = await waitForUser();
+  if (user) {
+    const snap = await getDoc(doc(db, 'users', user.uid));
+    const hasProfile = snap.exists() && snap.data()?.profileComplete === true;
+    if (hasProfile) {
+      // ĐÃ đăng nhập & có hồ sơ → chuyển tới trang chọn khóa học
+      redirect('/courses');
+    }
   }
 
   return (
-    <main className="p-8 space-y-6 text-center">
-      <h1 className="text-3xl font-bold mb-4">
-        Xin chào, {session.user?.name || "bạn"} 👋
-      </h1>
-      <p className="text-gray-600 mb-6">
-        Hãy chọn khóa học để bắt đầu.
-      </p>
-      <Link
-        href="/courses"
-        className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-500"
-      >
-        Vào danh sách khóa học
-      </Link>
-      {/* ✅ Thêm nút Đăng xuất ngay bên dưới */}
-      <div className="mt-4">
-        <SignOutButton />
+    <main style={{ padding: 24, maxWidth: 720, margin: '0 auto' }}>
+      <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 6 }}>Seiyo Academy</h1>
+      <p style={{ color: '#444', marginBottom: 16 }}>Hệ thống học trực tuyến 二級建築士</p>
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <Link
+          href="/signin?mode=signup"
+          style={{ padding: '12px 16px', borderRadius: 10, background: '#175cd3', color: '#fff', fontWeight: 700 }}
+        >
+          新規登録 / Đăng ký
+        </Link>
+        <Link
+          href="/signin"
+          style={{ padding: '12px 16px', borderRadius: 10, border: '1px solid #175cd3', color: '#175cd3', fontWeight: 700 }}
+        >
+          ログイン / Đăng nhập
+        </Link>
+      </div>
+
+      <div style={{ marginTop: 18, color: '#667085' }}>
+        ※ Sau khi đăng nhập bằng Google lần đầu, bạn sẽ điền hồ sơ cá nhân ngắn và được chuyển đến My Page.
       </div>
     </main>
   );

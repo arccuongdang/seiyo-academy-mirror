@@ -24,7 +24,7 @@ export default function OnboardingPage() {
         const snap = await getDoc(ref);
         if (snap.exists()) {
           // nếu đã hoàn tất hồ sơ → đưa về trang học
-          return router.push('/courses/KTS2'); // hoặc trang dashboard của bạn
+          return router.push('/courses'); // chuyển hướng đến trang các môn học
         }
       } catch (e: any) {
         if (e?.message === 'AUTH_REQUIRED') {
