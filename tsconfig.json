@@ -16,9 +16,10 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    "baseUrl": ".",
+    "baseUrl": "src",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["*"]
+
     },
     "esModuleInterop": true,
     "plugins": [
@@ -31,7 +32,7 @@
     "**/*.ts",
     "**/*.tsx",
     "next-env.d.ts",
-    "src/types/*.d.ts",
+    "src/types/**/*.d.ts",
     ".next/types/**/*.ts"
   ],
   "exclude": [
