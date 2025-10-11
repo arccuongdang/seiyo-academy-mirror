@@ -41,3 +41,6 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+#Đảm bảo dictionary lên repo
+!public/kuromoji/dict/**
