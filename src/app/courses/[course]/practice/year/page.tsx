@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { loadManifest, pickLatestFile, loadSubjectSnapshot } from '@/lib/qa/excel';
 import { toQARenderItems, shuffleOptions } from '@/lib/qa/formatters';
 import { gradeSingleChoice } from '@/lib/qa/grade';
-import { toFuriganaHtml } from '../../../../lib/jp/kuroshiro';
+import { toFuriganaHtml } from '../../../../../lib/jp/kuroshiro';
 import type { QARenderItem, QAOption } from '@/lib/qa/schema';
 
 type ViewQuestion = QARenderItem & {
