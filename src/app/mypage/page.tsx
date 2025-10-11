@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import AuthGate from '../../components/AuthGate';
-import { db, requireUser } from '@/lib/firebase/client';
+import { db, requireUser } from '../../lib/firebase/client';
 import {
   collection, query, where, orderBy, limit, getDocs, Timestamp, doc, getDoc
 } from 'firebase/firestore';
