@@ -1,17 +1,18 @@
 'use client';
 
 /**
- * Trang chọn môn cho một khóa học (course).
- * - Đọc manifest để biết môn nào có dữ liệu (ẩn môn rỗng).
- * - Hỗ trợ mọi format manifest (phẳng theo course / lồng theo subject / mảng filename string[]).
- * - Bọc AuthGate + ProfileGate theo chính sách điều hướng bạn đã đặt.
+ * Trang chọn đề cho 1 khóa học (course).
+ * - Đọc manifest đa định dạng (phẳng theo course / lồng theo subject / string[]).
+ * - Hiển thị danh sách môn: tên JA (nếu có), kèm số phiên bản đề.
+ * - Nút theo năm: nếu chỉ có 1 môn thì tự gắn subject=..., còn nhiều môn thì chuyển sang luồng chọn môn trước.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 // Data loaders
-import { loadManifest } from '../../../lib/qa/excel';
+import { loadManifest, loadSubjectsMeta } from '../../../lib/qa/excel';
 import type { Manifest } from '../../../lib/qa/schema';
 
 // Gates
@@ -20,55 +21,102 @@ import ProfileGate from '../../../components/ProfileGate';
 
 // ----------------- helpers -----------------
 
-/**
- * Lấy danh sách subject khả dụng từ manifest cho 1 course.
- * Hỗ trợ 3 cấu trúc:
- *  A) Phẳng: manifest[courseId] = [{ subjectId, filename, publishedAt }, ...]
- *  B) Lồng:  manifest[courseId][subjectId] = ManifestEntry[]
- *  C) Lồng-cũ: manifest[courseId][subjectId] = string[] (chỉ filename)
- */
-function getAvailableSubjects(manifest: Manifest | null, courseId: string): string[] {
-  if (!manifest) return [];
-  const courseBlock: any = (manifest as any)[courseId];
-  if (!courseBlock) return [];
+/** Gom từ manifest => { [subjectId]: { count: number, filenames: string[] } }  */
+function collectSubjectsFromManifest(
+  manifest: Manifest | null,
+  courseId: string
+): Record<string, { count: number; filenames: string[] }> {
+  const out: Record<string, { count: number; filenames: string[] }> = {};
+  if (!manifest) return out;
 
-  // A) Phẳng theo course: mảng entries
-  if (Array.isArray(courseBlock)) {
-    const set = new Set<string>();
-    for (const e of courseBlock) {
-      if (e?.subjectId && e?.filename) set.add(String(e.subjectId));
+  const block: any = (manifest as any)[courseId];
+  if (!block) return out;
+
+  // A) Phẳng theo course: mảng entries { subjectId, filename, ... }
+  if (Array.isArray(block)) {
+    for (const e of block) {
+      const sid = e?.subjectId;
+      const fn = e?.filename;
+      if (!sid || !fn) continue;
+      if (!out[sid]) out[sid] = { count: 0, filenames: [] };
+      out[sid].count += 1;
+      out[sid].filenames.push(String(fn));
     }
-    return Array.from(set).sort();
+    return out;
   }
 
-  // B/C) Lồng theo subjectId
-  if (typeof courseBlock === 'object') {
-    return Object.keys(courseBlock)
-      .filter((sid) => {
-        const list = (courseBlock as any)[sid];
-        return Array.isArray(list) && list.length > 0; // chỉ lấy các subject có dữ liệu
-      })
-      .sort();
+  // B/C) Lồng: { [subjectId]: ManifestEntry[] | string[] }
+  if (typeof block === 'object') {
+    for (const sid of Object.keys(block)) {
+      const list = (block as any)[sid];
+      if (!Array.isArray(list) || list.length === 0) continue;
+
+      // dạng string[] (filename thuần)
+      if (typeof list[0] === 'string') {
+        out[sid] = { count: list.length, filenames: list.map(String) };
+        continue;
+      }
+
+      // dạng ManifestEntry[]
+      const files: string[] = [];
+      for (const it of list) {
+        if (it?.filename) files.push(String(it.filename));
+      }
+      if (files.length > 0) out[sid] = { count: files.length, filenames: files };
+    }
+    return out;
   }
 
-  return [];
+  return out;
 }
+
+/** Danh sách năm hiển thị trên UI (có thể tùy chỉnh) */
+const YEAR_CHOICES = [
+  { label: '令和6年（2024年）', year: 2024 },
+  { label: '令和5年（2023年）', year: 2023 },
+  { label: '令和4年（2022年）', year: 2022 },
+  { label: '令和3年（2021年）', year: 2021 },
+  { label: '令和2年（2020年）', year: 2020 },
+];
 
 // ----------------- page -----------------
 
 export default function CoursePage({ params }: { params: { course: string } }) {
   const { course } = params;
+  const router = useRouter();
+
   const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [meta, setMeta] = useState<Record<string, { nameJA?: string; nameVI?: string }>>({});
   const [err, setErr] = useState<string | null>(null);
 
-  // Tải manifest khi vào trang
+  // Tải manifest + meta môn
   useEffect(() => {
-    loadManifest()
-      .then((m) => setManifest(() => m)) // dùng functional updater để khớp SetStateAction<Manifest|null>
-      .catch((e) => setErr(e?.message || 'Không tải được manifest'));
-  }, []);
+    let mounted = true;
+    (async () => {
+      try {
+        const [m, mmeta] = await Promise.all([
+          loadManifest(),
+          loadSubjectsMeta(course),
+        ]);
+        if (!mounted) return;
+        setManifest(() => m);
+        setMeta(mmeta || {});
+      } catch (e: any) {
+        if (!mounted) return;
+        setErr(e?.message || 'Không tải được manifest');
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [course]);
 
-  const subjects = useMemo(() => getAvailableSubjects(manifest, course), [manifest, course]);
+  const subjectsInfo = useMemo(
+    () => collectSubjectsFromManifest(manifest, course),
+    [manifest, course]
+  );
+
+  const subjectIds = useMemo(() => Object.keys(subjectsInfo).sort(), [subjectsInfo]);
 
   // ------------- render -------------
 
@@ -77,78 +125,117 @@ export default function CoursePage({ params }: { params: { course: string } }) {
       <ProfileGate>
         <main style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
           <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>
-            {course} — Môn học
+            Khóa {course} — Chọn đề
           </h1>
 
           {err && (
-            <div style={{ color: 'crimson', marginBottom: 12 }}>
+            <div style={{ color: 'crimson', marginBottom: 16 }}>
               Lỗi: {err}
             </div>
           )}
 
-          {!manifest && !err && <div>Đang tải dữ liệu…</div>}
+          {!manifest && !err && <div>Đang tải dữ liệu...</div>}
 
-          {manifest && subjects.length === 0 && (
-            <div style={{ color: '#475467' }}>
-              Hiện chưa có dữ liệu môn học cho khóa {course}. Vui lòng quay lại sau.
+          {/* --- Theo môn --- */}
+          <h2 style={{ fontSize: 18, fontWeight: 800, margin: '24px 0 8px' }}>
+            分野別（Theo môn）
+          </h2>
+
+          {subjectIds.length === 0 ? (
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: 16, color: '#475467' }}>
+              Chưa có dữ liệu môn cho khóa {course}.
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gap: 12 }}>
+              {subjectIds.map((sid) => {
+                const info = subjectsInfo[sid];
+                const displayName = meta?.[sid]?.nameJA || sid; // tên JA nếu có, fallback ID
+                return (
+                  <div
+                    key={sid}
+                    style={{
+                      border: '1px solid #e5e7eb',
+                      borderRadius: 12,
+                      padding: 16,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 800 }}>{displayName}</div>
+                      <div style={{ color: '#6b7280', fontSize: 12 }}>{info.count} phiên bản đề</div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <Link
+                        href={`/courses/${course}/practice/start?subject=${encodeURIComponent(sid)}`}
+                        style={{
+                          padding: '8px 12px',
+                          border: '1px solid #175cd3',
+                          borderRadius: 8,
+                          background: '#175cd3',
+                          color: '#fff',
+                          fontWeight: 700,
+                        }}
+                      >
+                        Luyện theo môn
+                      </Link>
+
+                      <Link
+                        href={`/courses/${course}/practice/year?subject=${encodeURIComponent(sid)}`}
+                        style={{
+                          padding: '8px 12px',
+                          border: '1px solid #e5e7eb',
+                          borderRadius: 8,
+                          background: '#fff',
+                          color: '#111',
+                          fontWeight: 700,
+                        }}
+                      >
+                        Thi theo năm
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
-          {subjects.length > 0 && (
-            <section style={{ display: 'grid', gap: 12 }}>
-              {subjects.map((sid) => (
-                <div
-                  key={sid}
-                  style={{
-                    border: '1px solid #eee',
-                    borderRadius: 12,
-                    padding: 16,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 12,
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <div style={{ fontWeight: 700, fontSize: 16 }}>
-                    {sid}
-                  </div>
+          {/* --- Theo năm --- */}
+          <h2 style={{ fontSize: 18, fontWeight: 800, margin: '24px 0 8px' }}>
+            年度別（Theo năm）
+          </h2>
 
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {/* Luyện theo môn (bộ lọc tuỳ biến) */}
-                    <Link
-                      href={`/courses/${course}/practice/start?subject=${encodeURIComponent(sid)}`}
-                      style={{
-                        padding: '8px 12px',
-                        border: '1px solid #175cd3',
-                        borderRadius: 8,
-                        background: '#175cd3',
-                        color: '#fff',
-                        fontWeight: 700,
-                      }}
-                    >
-                      Luyện theo môn
-                    </Link>
-
-                    {/* Thi theo năm (dẫn tới trang chọn năm hoặc mặc định năm mới nhất) */}
-                    <Link
-                      href={`/courses/${course}/practice/year?subject=${encodeURIComponent(sid)}`}
-                      style={{
-                        padding: '8px 12px',
-                        border: '1px solid #e5e7eb',
-                        borderRadius: 8,
-                        background: '#fff',
-                        color: '#111',
-                        fontWeight: 700,
-                      }}
-                    >
-                      Thi theo năm
-                    </Link>
-                  </div>
-                </div>
-              ))}
-            </section>
-          )}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {YEAR_CHOICES.map((y) => (
+              <button
+                key={y.year}
+                onClick={() => {
+                  if (subjectIds.length === 1) {
+                    // nếu chỉ có 1 môn, auto gắn subject
+                    const sid = subjectIds[0];
+                    router.push(`/courses/${course}/practice/year?subject=${encodeURIComponent(sid)}&year=${y.year}`);
+                  } else if (subjectIds.length > 1) {
+                    // nếu có nhiều môn, yêu cầu chọn môn trước
+                    alert('Vui lòng chọn môn trước khi thi theo năm.');
+                  } else {
+                    alert('Chưa có dữ liệu môn cho khóa này.');
+                  }
+                }}
+                style={{
+                  padding: '10px 16px',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 10,
+                  background: '#fff',
+                }}
+              >
+                {y.label}
+              </button>
+            ))}
+          </div>
         </main>
       </ProfileGate>
     </AuthGate>

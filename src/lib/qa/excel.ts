@@ -42,3 +42,24 @@ export async function loadSubjectSnapshot(courseId: string, subjectId: string, f
   if (!res.ok) throw new Error(`Cannot load snapshot: ${url}`);
   return res.json();
 }
+
+// ------------------------------------------------------------------
+// (MỚI) Load meta môn từ /public/snapshots/<course>/subjects.json
+// Cấu trúc gợi ý:
+// { "TK": { "nameJA": "計画", "nameVI": "Thiết kế" }, "L": {...}, ... }
+// Nếu chưa có file -> trả về {}
+// ------------------------------------------------------------------
+export async function loadSubjectsMeta(
+  courseId: string
+): Promise<Record<string, { nameJA?: string; nameVI?: string }>> {
+  const url = `/snapshots/${courseId}/subjects.json`;
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) return {};
+    const json = await res.json();
+    if (json && typeof json === 'object') return json;
+    return {};
+  } catch {
+    return {};
+  }
+}
