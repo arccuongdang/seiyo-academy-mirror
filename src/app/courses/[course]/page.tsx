@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 // ⛳️ Import TRỰC TIẾP
 import { loadManifest } from "../../../lib/qa/excel";
+import type { Manifest } from '../../../lib/qa/schema';
 
 type Manifest = Record<string, Record<string, string[]>>;
 
@@ -13,7 +14,7 @@ export default function CoursesPage() {
 
   useEffect(() => {
     loadManifest()
-      .then(setManifest)
+      .then((m) => setManifest(() => m))    // ✅ dùng functional updater
       .catch((e) => setErr(e?.message || "Không tải được manifest"));
   }, []);
 
