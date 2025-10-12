@@ -8,6 +8,10 @@ import { toQARenderItems, shuffleOptions } from '../../../../../lib//qa/formatte
 import { gradeSingleChoice } from '../../../../../lib/qa/grade';
 import { toFuriganaHtml } from '../../../../../lib/jp/kuroshiro';
 import type { QARenderItem, QAOption } from '../../../../../lib/qa/schema';
+// Firestore client
+import { db } from '../../../../../lib/firebase/client';
+// Helper resolve rule
+import { getPassingRule, type PassingRule } from '../../../../../lib/passing/rules';
 
 
 type ViewQuestion = QARenderItem & {
@@ -31,6 +35,21 @@ type ViewQuestion = QARenderItem & {
 type FilterTab = 'all' | 'wrong' | 'blank';
 
 const [finished, setFinished] = useState(false);
+
+// Chuẩn đỗ hiện hành (đã resolve theo course/subject/year)
+const [rule, setRule] = useState<PassingRule | null>(null);
+// Metadata rule (để snapshot vào attempt)
+const [ruleMeta, setRuleMeta] = useState<{source: string; overrideId: string|null; version: number; publishedAt: any}>({
+  source: 'default',
+  overrideId: null,
+  version: 1,
+  publishedAt: null
+});
+
+// Đồng hồ (nếu rule chỉ định timeLimitSec & showClock)
+const [timeLeftSec, setTimeLeftSec] = useState<number | null>(null);
+
+
 const [tab, setTab] = useState<'all'|'wrong'>('all');
 const [score, setScore] = useState<{ total: number; correct: number; blank: number }>({ total: 0, correct: 0, blank: 0 });
 // questions đang có sẵn từ trước (mảng QARenderItem đã chấm điểm)
@@ -58,6 +77,47 @@ export default function YearPracticePage({ params }: { params: { course: string 
 
   // Review filter
   const [tab, setTab] = useState<FilterTab>('all');
+  
+  useEffect(() => {
+    // Cần có subject & đã có ít nhất 1 câu để lấy examYear (nếu bạn dùng year từ câu hỏi)
+    if (!subject || !questions || questions.length === 0) return;
+
+    (async () => {
+      // Lấy examYear từ câu đầu (mọi câu cùng năm)
+      const year = questions[0]?.examYear ?? null;
+
+      // courseId đến từ params
+      const courseId = params.course;
+
+      const { rule: resolved, source, overrideId, version, publishedAt } =
+        await getPassingRule(db, courseId, { mode: 'year', subjectId: subject, year });
+
+      setRule(resolved);
+      setRuleMeta({ source, overrideId, version, publishedAt });
+
+      // Nếu rule có giới hạn thời gian & bật đồng hồ → set timeLeft
+      if (resolved?.showClock && typeof resolved.timeLimitSec === 'number' && resolved.timeLimitSec > 0) {
+        setTimeLeftSec(resolved.timeLimitSec);
+      } else {
+        setTimeLeftSec(null);
+      }
+    })();
+  }, [params.course, subject, questions]);
+
+  // Đồng hồ đếm ngược
+  useEffect(() => {
+    if (finished) return;                 // đã nộp bài thì dừng
+    if (timeLeftSec == null) return;      // không có giới hạn
+    if (timeLeftSec <= 0) {
+      // Hết giờ: đánh dấu đã hết giờ (dừng đồng hồ); 
+      // Nếu bạn đã có handler nộp toàn bài, gọi nó tại đây thay cho setFinished.
+      setFinished(true);
+      return;
+    }
+    const t = setTimeout(() => setTimeLeftSec((s) => (s == null ? s : s - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [timeLeftSec, finished]);
+
 
   useEffect(() => {
     if (!subject || !year) return;
@@ -211,6 +271,39 @@ export default function YearPracticePage({ params }: { params: { course: string 
 
     setQuestions(graded);
     setScore({ total, correct, blank });
+
+    // ❶ Kết luận đậu/rớt
+    let passed = false;
+    if (rule) {
+      if (typeof rule.minCorrect === 'number') {
+        passed = score.correct >= rule.minCorrect;
+      } else if (typeof rule.passPercent === 'number') {
+        const pct = score.total ? (score.correct / score.total) * 100 : 0;
+        passed = pct >= rule.passPercent;
+      } else {
+        // Không có rule → coi như chỉ hiển thị điểm, không xét đậu/rớt
+        passed = false;
+      }
+    }
+
+    // ❷ Ghi attempt: thêm snapshot rule
+    await setDoc(doc(db, 'attempts', attemptId), {
+      // ... các field bạn đã có như userId, courseId, subjectId, mode: 'year', examYear, total, correct, blank,
+      passed,
+      ruleSnapshot: {
+        courseId: params.course,
+        source: ruleMeta.source,         // 'default' | 'year' | 'subject' | 'year+subject'
+        overrideId: ruleMeta.overrideId, // null nếu dùng default
+        version: ruleMeta.version,
+        publishedAt: ruleMeta.publishedAt || null,
+        passPercent: rule?.passPercent ?? null,
+        minCorrect: rule?.minCorrect ?? null,
+        timeLimitSec: rule?.timeLimitSec ?? null,
+        showClock: typeof rule?.showClock === 'boolean' ? rule!.showClock : null,
+      }
+    }, { merge: true });
+
+    // ❸ Đánh dấu completed
     setFinished(true);
     setTab('all');
     // ở year-mode, sau khi kết thúc mới reveal lời giải, nên không cần nút submit từng câu
@@ -441,7 +534,20 @@ function tabBtnStyle(active: boolean): React.CSSProperties {
   };
 }
 
+
+
 /** Card hiển thị khi đang làm bài (không reveal giải) */
+//đồng hồ trong UI
+{rule && (
+  <div style={{ marginBottom: 8, color: '#667085' }}>
+    Chuẩn đỗ: {typeof rule.minCorrect === 'number' ? `≥ ${rule.minCorrect} câu` : ''}
+    {typeof rule.passPercent === 'number' ? `${typeof rule.minCorrect === 'number' ? '・' : ''}≥ ${rule.passPercent}%` : ''}
+    {rule.showClock && typeof rule.timeLimitSec === 'number' && (
+      <> ・ Thời gian: {Math.floor((timeLeftSec ?? rule.timeLimitSec)/60)}m{((timeLeftSec ?? rule.timeLimitSec)%60)}s</>
+    )}
+  </div>
+)}
+
 function QuestionCard(props: {
   q: ViewQuestion;
   idx: number;
@@ -598,7 +704,17 @@ function toggleBtnStyle(active: boolean): React.CSSProperties {
   };
 }
 
-/** Review card (sau khi kết thúc bài) — REVEAL lời giải + multi-correct */
+/** Review card (sau khi kết thúc bài) — ĐẬU/RỚT + REVEAL lời giải + multi-correct */
+{finished && (
+  <div style={{ marginBottom: 10 }}>
+    {passed ? (
+      <span style={{ padding: '4px 8px', borderRadius: 999, background: '#dcfce7', color: '#166534' }}>ĐẬU</span>
+    ) : (
+      <span style={{ padding: '4px 8px', borderRadius: 999, background: '#fee2e2', color: '#991b1b' }}>RỚT</span>
+    )}
+  </div>
+)}
+
 function ReviewCard({ q, indexLabel }: { q: ViewQuestion; indexLabel: string }) {
   const byId = useMemo(() => new Map(q.shuffled.map((o) => [o.id, o])), [q.shuffled]);
   const selected = q.selectedId ? byId.get(q.selectedId) : undefined;
@@ -693,7 +809,8 @@ function ExplanationJA_VI({ q, byId }: { q: ViewQuestion; byId: Map<string | und
   const [otherFuri, setOtherFuri] = useState<Record<string, string>>({});
 
   const selected = q.selectedId ? byId.get(q.selectedId) : undefined;
-
+  const [timeLeftSec, setTimeLeftSec] = useState<number | null>(null);
+    // (không cần handleSubmitAll)
   const selJA = selected?.explanationJA || '';
   const selVI = selected?.explanationVI || '';
   const genJA = q.explanationGeneralJA || '';
