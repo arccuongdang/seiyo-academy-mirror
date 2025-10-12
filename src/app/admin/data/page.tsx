@@ -200,7 +200,9 @@ export default function AdminDataPage() {
     const questionsRaw = XLSX.utils.sheet_to_json<Question>(wsQuestions, { defval: "" });
     
     // ... sau khi parse workbook thành các sheet JSON:
-    const subjectsRows = sheets['Subjects']; // hoặc cách bạn lấy dữ liệu của sheet
+    const subjectsSheet = wb?.Sheets?.['Subjects'];
+    const subjectsRows: Array<Record<string, any>> =
+       subjectsSheet ? XLSX.utils.sheet_to_json(subjectsSheet, { defval: '' }) : [];
     const subjectsMeta = buildSubjectsMeta(subjectsRows);
 
     const questionsReady = filterReadyRows(questionsRaw);
@@ -221,9 +223,13 @@ export default function AdminDataPage() {
     }
 
     // Group & build snapshots
-    const grouped = groupByCourseSubject(ok.map(normalizeQuestion));
+    const grouped = groupByCourseSubject(ok);
+
     const ts = Date.now();
     const zip = new JSZip();
+    // ghi subjects.json vào zip mỗi course 1 lần
+    const wroteSubjects = new Set<string>();
+
 
     for (const [courseId, subMap] of grouped) {
       for (const [subjectId, list] of subMap) {
@@ -235,10 +241,15 @@ export default function AdminDataPage() {
         const outPath = `public/snapshots/${courseId}/${filename}`;
         zip.file(outPath, JSON.stringify(payload, null, 2));
 
-        // đảm bảo thư mục tồn tại: public/snapshots/<course>/
-        const path = `public/snapshots/${courseId}/subjects.json`;
-        await fs.promises.mkdir(`public/snapshots/${courseId}`, { recursive: true });
-        await fs.promises.writeFile(path, JSON.stringify(subjectsMeta, null, 2), 'utf8');
+        // ĐƯA subjects.json vào gói ZIP (mỗi course chỉ ghi 1 lần)
+        if (!wroteSubjects.has(courseId)) {
+          zip.file(
+            `public/snapshots/${courseId}/subjects.json`,
+            JSON.stringify(subjectsMeta, null, 2)
+          );
+          wroteSubjects.add(courseId);
+        }
+
 
         if (!manifest[courseId]) manifest[courseId] = {};
         if (!manifest[courseId][subjectId]) manifest[courseId][subjectId] = [];

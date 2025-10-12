@@ -1,10 +1,24 @@
 import type { Manifest, SubjectSnapshot, ManifestEntry } from "./schema";
 
 export async function loadManifest(): Promise<Manifest> {
-  const res = await fetch("/snapshots/manifest.json", { cache: "no-store" });
-  if (!res.ok) throw new Error("Cannot load manifest.json");
-  return res.json();
+  try {
+    const res = await fetch("/snapshots/manifest.json", { cache: "no-store" });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch manifest: ${res.status} ${res.statusText}`);
+    }
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text) as Manifest;
+      return json;
+    } catch (e: any) {
+      throw new Error(`Invalid manifest.json: ${e?.message || "JSON parse error"}`);
+    }
+  } catch (e) {
+    console.error("[loadManifest] error:", e);
+    throw e;
+  }
 }
+
 
 /**
  * Chọn file snapshot mới nhất cho course/subject.
@@ -43,33 +57,6 @@ export async function loadSubjectSnapshot(courseId: string, subjectId: string, f
   return res.json();
 }
 
-// ------------------------------------------------------------------
-// (MỚI) Load meta môn từ /public/snapshots/<course>/subjects.json
-// Cấu trúc gợi ý:
-// { "TK": { "nameJA": "計画", "nameVI": "Thiết kế" }, "L": {...}, ... }
-// Nếu chưa có file -> trả về {}
-// ------------------------------------------------------------------
-// Load meta môn từ /snapshots/<course>/subjects.json
-export async function loadManifest(): Promise<Manifest> {
-  try {
-    const res = await fetch("/snapshots/manifest.json", { cache: "no-store" });
-    if (!res.ok) {
-      throw new Error(`Failed to fetch manifest: ${res.status} ${res.statusText}`);
-    }
-
-    // Đọc text trước để bắt lỗi JSON rõ ràng
-    const text = await res.text();
-    try {
-      const json = JSON.parse(text) as Manifest;
-      return json;
-    } catch (e: any) {
-      throw new Error(`Invalid manifest.json: ${e?.message || "JSON parse error"}`);
-    }
-  } catch (e) {
-    console.error("[loadManifest] error:", e);
-    throw e; // quan trọng: ném ra để UI setErr(...)
-  }
-}
 
 // ------------------------------------------------------------------
 // (MỚI) Load meta môn từ /public/snapshots/<course>/subjects.json
