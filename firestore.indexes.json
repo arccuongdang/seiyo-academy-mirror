@@ -1,5 +1,30 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "attempts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attempts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "courseId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attempts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "subjectId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": [],
   "firestore": {
     "rules": "firestore.rules",
