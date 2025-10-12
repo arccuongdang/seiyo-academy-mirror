@@ -30,6 +30,11 @@ import { toFuriganaHtml } from '../../../../../lib/jp/kuroshiro';
 // Types
 import type { QARenderItem, QAOption } from '../../../../../lib/qa/schema';
 
+// Firestore client & helpers
+import { db, requireUser, serverTimestamp } from '../../../../../lib/firebase/client';
+import { collection, addDoc, doc, setDoc, getDoc, increment } from 'firebase/firestore';
+
+
 /** Kiểu render + state UI cho từng câu */
 type ViewQuestion = {
   // từ QARenderItem
@@ -166,8 +171,17 @@ function PracticeStartInner({ params }: { params: { course: string } }) {
       prev.map((q, i) => {
         if (i !== qIdx || q.submitted) return q;
 
-        // gradeSingleChoice hiện nhận (selectedId: string|null, options: QAOption[])
-        const result = gradeSingleChoice(q.selectedId != null ? String(q.selectedId) : null, q.shuffled);
+        // gradeSingleChoice(selectedId: string|null, options: QAOption[])
+        const result = gradeSingleChoice(
+          q.selectedId != null ? String(q.selectedId) : null,
+          q.shuffled
+        );
+
+        // Nếu sai → ghi wrongs
+        if (!result.isCorrect) {
+          // không await ở đây để UI mượt; fire-and-forget
+          upsertWrongForUser(q, q.selectedId ?? null);
+        }
 
         return {
           ...q,
@@ -179,6 +193,33 @@ function PracticeStartInner({ params }: { params: { course: string } }) {
       }),
     );
   };
+
+  
+  //3.2 Ghi/ cập nhật "câu sai" cho user
+  async function upsertWrongForUser(q: ViewQuestion, selectedKey: number | null) {
+    try {
+      const u = await requireUser();
+      const ref = doc(db, 'users', u.uid, 'wrongs', q.id);
+      const snap = await getDoc(ref);
+
+      const payload = {
+        courseId: q.courseId,
+        subjectId: q.subjectId,
+        examYear: q.examYear ?? null,
+        lastSelectedId: selectedKey ?? null,
+        lastAt: serverTimestamp(),
+        count: increment(1),
+      };
+
+      if (snap.exists()) {
+        await setDoc(ref, payload, { merge: true });
+      } else {
+        await setDoc(ref, { ...payload, count: 1 }, { merge: true });
+      }
+    } catch {
+      // im lặng nếu lỗi nhỏ, tránh làm hỏng UX trả lời
+    }
+  }
 
   // 4) Toggle VI/JA cho CÂU HỎI
   const toggleVIQuestion = (qIdx: number) => {
@@ -305,6 +346,39 @@ function PracticeStartInner({ params }: { params: { course: string } }) {
       });
     })();
   };
+
+  // Tính & lưu một session attempt cho mode start (subject-mode)
+  async function finalizeSessionAttempt() {
+    try {
+      const answered = questions;
+      if (answered.length === 0) return;
+
+      const total = answered.length;
+      const correct = answered.filter((q) => q.submitted && q.isCorrect).length;
+      const blank = answered.filter((q) => !q.submitted || q.selectedId == null).length;
+
+      const u = await requireUser();
+      await addDoc(collection(db, 'attempts'), {
+        userId: u.uid,
+        mode: 'subject',             // ★ khác year-mode
+        courseId: answered[0].courseId,
+        subjectId: answered[0].subjectId,
+        examYear: null,              // không theo năm trong start-mode
+        total,
+        correct,
+        blank,
+        durationSec: null,           // có thể bổ sung sau (nếu track startedAt)
+        passed: null,                // start-mode không xét pass/fail
+        createdAt: serverTimestamp(),
+        ruleSnapshot: null,          // không áp dụng rule ở start-mode
+      });
+
+      alert('Đã lưu kết quả buổi luyện (start-mode). Xem ở My Page.');
+    } catch (e: any) {
+      alert(`Lưu kết quả thất bại: ${e?.message || 'Unknown error'}`);
+    }
+  }
+
 
   // -----------------------
   // Render
@@ -546,6 +620,25 @@ function PracticeStartInner({ params }: { params: { course: string } }) {
           </div>
         );
       })}
+
+      {/* Nút kết thúc buổi luyện & lưu attempt */}
+      <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+        <button
+          onClick={finalizeSessionAttempt}
+          style={{
+            padding: '10px 14px',
+            borderRadius: 8,
+            border: '1px solid #175cd3',
+            background: '#175cd3',
+            color: '#fff',
+            fontWeight: 700
+          }}
+          title="Lưu thống kê buổi luyện hiện tại vào My Page"
+        >
+          終了して保存 / Kết thúc & Lưu
+        </button>
+      </div>
+
     </main>
   );
 }
