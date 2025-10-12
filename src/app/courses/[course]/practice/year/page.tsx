@@ -217,13 +217,14 @@ export default function YearPracticePage({ params }: { params: { course: string 
     try {
       // 1) Chấm từng câu bằng gradeSingleChoice
       const graded: ViewQuestion[] = questions.map((q) => {
-        const res = gradeSingleChoice(q.selectedId ?? null, q.options);
+        const res = gradeSingleChoice(q.selectedId != null ? String(q.selectedId) : null, q.options);
         return {
           ...q,
           submitted: true,
           isCorrect: res.isCorrect,
         };
       });
+
 
       const total = graded.length;
       const correct = graded.filter((x) => x.isCorrect).length;
