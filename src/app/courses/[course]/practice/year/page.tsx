@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 // Data loading
 import { loadManifest, pickLatestFile, loadSubjectSnapshot } from '../../../../../lib/qa/excel';
 // Formatter + shuffle
-import { toQARenderItem, shuffleOptions } from '../../../../../lib/qa/formatters';
+import { toQARenderItem, shuffleOptions, CognitiveLevel } from '../../../../../lib/qa/formatters';
 // Grader
 import { gradeSingleChoice } from '../../../../../lib/qa/grade';
 // Furigana
@@ -27,6 +27,7 @@ type ViewQuestion = QARenderItem & {
   isCorrect?: boolean;
   correctIds?: string[];
   multiCorrect?: boolean;
+  
 
   // JA/VI toggles
   showVIQuestion?: boolean;
@@ -37,6 +38,10 @@ type ViewQuestion = QARenderItem & {
   // Cache furigana
   furiQuestionHtml?: string;
   furiOptionHtml?: Record<string, string>;
+
+  // thêm hai field officialPosition, cognitiveLevel
+  officialPosition?: number | null;
+  cognitiveLevel?: CognitiveLevel | null;
 };
 
 type FilterTab = 'all' | 'wrong' | 'blank';
