@@ -3,17 +3,16 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { loadManifest } from "../../lib/qa/excel";
+import type { Manifest } from '../../lib/qa/schema'; 
 import AuthGate from '../../components/AuthGate';
 import ProfileGate from '../../components/ProfileGate';
-
-type Manifest = Record<string, Record<string, string[]>>;
 
 export default function CoursesPage() {
   const [manifest, setManifest] = useState<Manifest | null>(null);
 
   useEffect(() => {
     loadManifest()
-      .then(setManifest)
+      .then((m) => setManifest(() => m)) // ✅ functional updater, TS chấp nhận
       .catch((err) => console.error("Failed to load manifest:", err));
   }, []);
 

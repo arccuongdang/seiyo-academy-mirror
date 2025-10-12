@@ -40,6 +40,9 @@ export type QuestionItem = {
   /** giải thích chung (fallback nếu option không có explanation) */
   generalExplanationJA?: string;
   generalExplanationVI?: string;
+  
+  officialPosition?: number | null;
+  cognitiveLevel?: CognitiveLevel | null;
 };
 
 export type GradeResult = {

@@ -1,4 +1,4 @@
-import type { Manifest, SubjectSnapshot } from "./schema";
+import type { Manifest, SubjectSnapshot, ManifestEntry } from "./schema";
 
 export async function loadManifest(): Promise<Manifest> {
   const res = await fetch("/snapshots/manifest.json", { cache: "no-store" });
@@ -6,12 +6,34 @@ export async function loadManifest(): Promise<Manifest> {
   return res.json();
 }
 
-export function pickLatestFile(manifest: Manifest, courseId: string, subjectId: string): string | null {
+/**
+ * Chọn file snapshot mới nhất cho course/subject.
+ * Trả về: string | null (tên file JSON)
+ */
+export function pickLatestFile(
+  manifest: Manifest,
+  courseId: string,
+  subjectId: string
+): string | null {
   const subjects = manifest[courseId];
   if (!subjects) return null;
+
   const list = subjects[subjectId];
   if (!list || list.length === 0) return null;
-  return list[0];
+
+  // Nếu bạn luôn append theo thời gian, lấy phần tử cuối là đủ:
+  // return list[list.length - 1].filename;
+
+  // (Ổn hơn) Sắp theo publishedAt giảm dần rồi lấy filename đầu:
+  const sorted = [...list].sort((a: ManifestEntry, b: ManifestEntry) => {
+    const ta = Date.parse(a.publishedAt ?? "");
+    const tb = Date.parse(b.publishedAt ?? "");
+    if (Number.isFinite(ta) && Number.isFinite(tb)) return tb - ta;
+    // nếu thiếu timestamp, giữ nguyên thứ tự ban đầu
+    return 0;
+  });
+
+  return (sorted[0] ?? list[list.length - 1]).filename;
 }
 
 export async function loadSubjectSnapshot(courseId: string, subjectId: string, filename: string): Promise<SubjectSnapshot> {

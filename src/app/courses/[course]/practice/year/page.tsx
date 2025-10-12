@@ -6,14 +6,14 @@ import { useSearchParams } from 'next/navigation';
 // Data loading
 import { loadManifest, pickLatestFile, loadSubjectSnapshot } from '../../../../../lib/qa/excel';
 // Formatter + shuffle
-import { toQARenderItem, shuffleOptions, CognitiveLevel } from '../../../../../lib/qa/formatters';
+import { toQARenderItem, shuffleOptions} from '../../../../../lib/qa/formatters';
 // Grader
 import { gradeSingleChoice } from '../../../../../lib/qa/grade';
 // Furigana
 import { toFuriganaHtml } from '../../../../../lib/jp/kuroshiro';
 
 // Types
-import type { QARenderItem, QAOption } from '../../../../../lib/qa/schema';
+import type { QARenderItem, QAOption, CognitiveLevel} from '../../../../../lib/qa/schema';
 
 // Firestore (dùng cho passing rule)
 import { db } from '../../../../../lib/firebase/client';
@@ -100,8 +100,15 @@ export default function YearPracticePage({ params }: { params: { course: string 
         }
 
         const snapshot = await loadSubjectSnapshot(course, subject, filename);
-        const items = snapshot.items.map(toQARenderItem);
-        const rows = items.filter((q) => q.examYear === year);
+        // ép kiểu rõ ràng để tránh any từ snapshot.items
+        const items: QARenderItem[] = (snapshot.items as any[]).map(
+          toQARenderItem as (x: any) => QARenderItem
+        );
+
+        // annotate tham số q để không còn implicit any
+        const rows = items.filter((q: QARenderItem) => q.examYear === year);
+
+
         if (rows.length === 0) {
           setErr(`Chưa có câu hỏi cho ${subject} năm ${year}.`);
           setLoading(false);

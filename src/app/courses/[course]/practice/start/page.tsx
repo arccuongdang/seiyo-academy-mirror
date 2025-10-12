@@ -18,7 +18,7 @@ type ViewQuestion = QARenderItem & {
   selectedId?: string | null;
   submitted?: boolean;
   isCorrect?: boolean;
-  correctKeys?: number[];
+  correctIds?: string[];
   multiCorrect?: boolean;
 
   // Toggle JA/VI
@@ -92,13 +92,22 @@ export default function PracticeStart({ params }: { params: { course: string } }
   }, [allItems]);
 
   const tagList = useMemo(() => {
-    // snapshot.tags là string[] hoặc undefined → gom unique
     const set = new Set<string>();
     for (const q of allItems) {
-      (q.tags || []).forEach((t) => set.add(String(t)));
+      const raw = (q as any).tags;
+      let arr: string[] = [];
+      if (Array.isArray(raw)) {
+        arr = raw.map(String).filter(Boolean);
+      } else if (typeof raw === 'string') {
+        // hỗ trợ "a,b,c" hoặc "a b c"
+        arr = raw.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+      }
+      for (const t of arr) set.add(t);
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [allItems]);
+
+
 
   const difficultyList = useMemo(() => {
     const set = new Set<string>();
@@ -125,12 +134,21 @@ export default function PracticeStart({ params }: { params: { course: string } }
     // 2) Lọc theo tags (nếu có chọn)
     if (tagSelections.size > 0) {
       pool = pool.filter((q) => {
-        const tags = new Set((q.tags || []).map(String));
-        // chỉ nhận nếu câu có ít nhất 1 tag nằm trong lựa chọn
-        for (const t of tagSelections) if (tags.has(t)) return true;
+        const raw = (q as any).tags;
+        let arr: string[] = [];
+        if (Array.isArray(raw)) {
+          arr = raw.map(String).filter(Boolean);
+        } else if (typeof raw === 'string') {
+          arr = raw.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+        }
+        const tags = new Set(arr);
+        for (const t of tagSelections) {
+          if (tags.has(t)) return true; // chấp nhận nếu có ít nhất 1 tag khớp
+        }
         return false;
       });
     }
+
 
     // 3) Lọc theo độ khó (nếu khác RANDOM)
     if (difficultySel !== 'RANDOM') {
@@ -183,7 +201,7 @@ export default function PracticeStart({ params }: { params: { course: string } }
           ...q,
           submitted: true,
           isCorrect: res.isCorrect,
-          correctKeys: res.correctKeys,
+          correctIds: res.correctIds,
           multiCorrect: res.multiCorrect,
         };
       }),
@@ -503,7 +521,7 @@ export default function PracticeStart({ params }: { params: { course: string } }
             const furiHtml = q.furiOptionHtml?.[opt.id];
 
             const showResult = !!q.submitted;
-            const isCorrectChoice = !!q.correctKeys && q.correctKeys.includes(opt.key);
+            const isCorrectChoice = !!q.correctIds && q.correctIds.includes(opt.id);
             const isWrongPicked = showResult && selectedThis && !isCorrectChoice;
 
             return (

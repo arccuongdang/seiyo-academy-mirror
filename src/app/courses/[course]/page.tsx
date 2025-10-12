@@ -6,8 +6,6 @@ import Link from "next/link";
 import { loadManifest } from "../../../lib/qa/excel";
 import type { Manifest } from '../../../lib/qa/schema';
 
-type Manifest = Record<string, Record<string, string[]>>;
-
 export default function CoursesPage() {
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [err, setErr] = useState<string | null>(null);
