@@ -428,13 +428,35 @@ export default function YearPracticePage({ params }: { params: { course: string 
         {/* Nút nộp toàn bài */}
         <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
           <button
-            onClick={endExamAndGrade}
-            style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #175cd3', background: '#175cd3', color: '#fff', fontWeight: 700 }}
+            onClick={handleSubmitAll}
+            style={{
+              padding: '10px 14px',
+              borderRadius: 8,
+              border: '1px solid #175cd3',
+              background: '#175cd3',
+              color: '#fff',
+              fontWeight: 700,
+            }}
           >
-            試験を終了 / Kết thúc bài
+            全問を提出 / Nộp toàn bài
           </button>
+          <a href={`/courses/${course}/practice/year?subject=${subject}&year=${year}`}>
+            <button
+              style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                border: '1px solid #e5e7eb',
+                background: '#fff',
+                color: '#334155',
+                fontWeight: 700,
+              }}
+            >
+              やり直す / Làm lại
+            </button>
+          </a>
         </div>
-      </main>
+        </div> {/* ← đóng thẻ “card” câu hỏi hiện tại */}
+      </main>   {/* 🔚 nhớ ĐÓNG main ở cuối NHÁNH này */}
     );
   }
 
