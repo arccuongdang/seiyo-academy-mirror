@@ -21,7 +21,8 @@ import ProfileGate from '../../../components/ProfileGate';
 
 // ----------------- helpers -----------------
 
-/** Gom từ manifest => { [subjectId]: { count: number, filenames: string[] } }  */
+// Gom từ manifest => { [subjectId]: { count, filenames[] } } .
+// Hỗ trợ 3 format manifest: phẳng theo course / lồng theo subject / string[] filenames.
 function collectSubjectsFromManifest(
   manifest: Manifest | null,
   courseId: string
@@ -70,14 +71,35 @@ function collectSubjectsFromManifest(
   return out;
 }
 
-/** Danh sách năm hiển thị trên UI (có thể tùy chỉnh) */
-const YEAR_CHOICES = [
-  { label: '令和6年（2024年）', year: 2024 },
-  { label: '令和5年（2023年）', year: 2023 },
-  { label: '令和4年（2022年）', year: 2022 },
-  { label: '令和3年（2021年）', year: 2021 },
-  { label: '令和2年（2020年）', year: 2020 },
-];
+// --------------helper:-------------------
+// chuyển Gregorian → nhãn era Nhật + năm dương lịch ---
+function toEraLabel(y: number): string {
+  // Reiwa bắt đầu 2019
+  if (y >= 2019) {
+    const era = y - 2018; // 2019 → 1
+    return `令和${era}年（${y}年）`;
+  }
+  // Heisei 1989–2018
+  if (y >= 1989) {
+    const era = y - 1988; // 1989 → 1
+    return `平成${era}年（${y}年）`;
+  }
+  // Nếu lùi sâu hơn thì chỉ hiện Gregorian
+  return `${y}年`;
+}
+
+// --- helper: tạo danh sách năm giảm dần, ví dụ từ 2015 → năm hiện tại ---
+function makeYearChoices(minYear = 2015, maxYear = new Date().getFullYear()) {
+  const out: { label: string; year: number }[] = [];
+  for (let y = maxYear; y >= minYear; y--) {
+    out.push({ year: y, label: toEraLabel(y) });
+  }
+  return out;
+}
+
+// Dùng useMemo để không tính lại mỗi render
+const YEAR_CHOICES = useMemo(() => makeYearChoices(2015), []);
+
 
 // ----------------- page -----------------
 
@@ -99,8 +121,8 @@ export default function CoursePage({ params }: { params: { course: string } }) {
           loadSubjectsMeta(course),
         ]);
         if (!mounted) return;
-        setManifest(() => m);
-        setMeta(mmeta || {});
+        setManifest(() => m); // dùng functional updater để khớp SetStateAction
+        setMeta(mmeta || {}); // lưu meta (có thể rỗng)
       } catch (e: any) {
         if (!mounted) return;
         setErr(e?.message || 'Không tải được manifest');

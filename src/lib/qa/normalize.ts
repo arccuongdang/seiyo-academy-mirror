@@ -91,3 +91,22 @@ export function normalizeQuestions(raw: QuestionItem[]) {
 
   return step2;
 }
+
+// Từ sheet "Subjects" → bản đồ meta môn
+export function buildSubjectsMeta(
+  subjectsSheetRows: Array<Record<string, any>>
+): Record<string, { nameJA?: string; nameVI?: string }> {
+  const out: Record<string, { nameJA?: string; nameVI?: string }> = {};
+  if (!Array.isArray(subjectsSheetRows)) return out;
+
+  for (const row of subjectsSheetRows) {
+    // cột trong Excel: subjectId, subjectNameJA, subjectNameVI (đúng tên cột bạn đang dùng)
+    const id = String(row.subjectId || '').trim();
+    if (!id) continue;
+    out[id] = {
+      nameJA: row.subjectNameJA ? String(row.subjectNameJA).trim() : undefined,
+      nameVI: row.subjectNameVI ? String(row.subjectNameVI).trim() : undefined,
+    };
+  }
+  return out;
+}

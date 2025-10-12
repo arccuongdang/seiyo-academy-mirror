@@ -1,5 +1,16 @@
 {
-  "KTS2": [
-    { "subjectId": "TK", "filename": "TK-questions.v1760255773498.json", "publishedAt": "2025-10-12T07:00:00Z" }
-  ]
+  "KTS2": {
+    "TK": [
+      "TK-questions.v1760310123083.json"
+    ],
+    "L": [
+      "L-questions.v1760310123083.json"
+    ],
+    "KC": [
+      "KC-questions.v1760310123083.json"
+    ],
+    "TC": [
+      "TC-questions.v1760310123083.json"
+    ]
+  }
 }

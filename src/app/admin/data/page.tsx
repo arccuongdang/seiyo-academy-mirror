@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
+import { buildSubjectsMeta } from '../../../lib/qa/normalize';
 
 // ===== Types
 type Question = {
@@ -197,6 +198,10 @@ export default function AdminDataPage() {
     const subjects = XLSX.utils.sheet_to_json<Subject>(wb.Sheets["Subjects"] ?? {}, { defval: "" });
     const wsQuestions = wb.Sheets["Questions"] ?? wb.Sheets["questions"] ?? {};
     const questionsRaw = XLSX.utils.sheet_to_json<Question>(wsQuestions, { defval: "" });
+    
+    // ... sau khi parse workbook thành các sheet JSON:
+    const subjectsRows = sheets['Subjects']; // hoặc cách bạn lấy dữ liệu của sheet
+    const subjectsMeta = buildSubjectsMeta(subjectsRows);
 
     const questionsReady = filterReadyRows(questionsRaw);
     setSkippedCount(questionsRaw.length - questionsReady.length);
@@ -229,6 +234,11 @@ export default function AdminDataPage() {
         const filename = `${subjectId}-questions.v${ts}.json`;
         const outPath = `public/snapshots/${courseId}/${filename}`;
         zip.file(outPath, JSON.stringify(payload, null, 2));
+
+        // đảm bảo thư mục tồn tại: public/snapshots/<course>/
+        const path = `public/snapshots/${courseId}/subjects.json`;
+        await fs.promises.mkdir(`public/snapshots/${courseId}`, { recursive: true });
+        await fs.promises.writeFile(path, JSON.stringify(subjectsMeta, null, 2), 'utf8');
 
         if (!manifest[courseId]) manifest[courseId] = {};
         if (!manifest[courseId][subjectId]) manifest[courseId][subjectId] = [];
