@@ -418,7 +418,26 @@ function PracticeStartInner({ params }: { params: { course: string } }) {
               <div style={{ fontWeight: 600 }}>
                 問 {idx + 1}: {titleJA || titleVI || '(No content)'}
               </div>
-              {multi && <span style={{ color: '#b45309', fontSize: 12, border: '1px solid #fde68a', background: '#fef3c7', padding: '0 6px', borderRadius: 6 }}>複数正解あり</span>}
+
+              {/* ✅ badge vị trí chính thức */}
+              {typeof q.officialPosition === 'number' && (
+                <span style={{ border: '1px solid #e5e7eb', borderRadius: 999, padding: '2px 8px', fontSize: 12 }}>
+                  位置 {q.officialPosition}
+                </span>
+              )}
+
+              {/* ✅ badge cấp độ nhận thức */}
+              {q.cognitiveLevel && (
+                <span style={{ border: '1px solid #e5e7eb', borderRadius: 999, padding: '2px 8px', fontSize: 12 }}>
+                  {q.cognitiveLevel}
+                </span>
+              )}
+
+              {multi && (
+                <span style={{ color: '#b45309', fontSize: 12, border: '1px solid #fde68a', background: '#fef3c7', padding: '0 6px', borderRadius: 6 }}>
+                  複数正解あり
+                </span>
+              )}
               {titleVI && (
                 <button
                   onClick={() => toggleVIQuestion(idx)}
@@ -638,7 +657,6 @@ function PracticeStartInner({ params }: { params: { course: string } }) {
           終了して保存 / Kết thúc & Lưu
         </button>
       </div>
-
     </main>
   );
 }

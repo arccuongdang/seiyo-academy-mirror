@@ -28,6 +28,7 @@ export type SubjectSnapshot = {
 
 export type Manifest = Record<string, Record<string, string[]>>;
 
+export type CognitiveLevel = 'Remember' | 'Understand' | 'Apply' | 'Analyze';
 
 export type QAOption = {
   /** số thứ tự option 1..5 (nếu UI đang dùng) */
@@ -59,3 +60,15 @@ export type QARenderItem = {
   explanationGeneralVI?: string;
   explanationImage?: string;
 };
+
+export interface QuestionSnapshotItem {
+  // ... các trường hiện có ...
+  officialPosition?: number | null;        // 1..25 (tuỳ đề)
+  cognitiveLevel?: CognitiveLevel | null;  // Bloom-lite
+}
+
+export interface QARenderItem {
+  // ... các trường hiện có ...
+  officialPosition?: number | null;
+  cognitiveLevel?: CognitiveLevel | null;
+}

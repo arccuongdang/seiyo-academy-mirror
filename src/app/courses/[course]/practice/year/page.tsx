@@ -336,22 +336,41 @@ export default function YearPracticePage({ params }: { params: { course: string 
         </div>
 
         {/* Card câu hỏi hiện tại */}
-        <div style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+          <div style={{ fontWeight: 600 }}>
             Câu {index + 1}: {cur.questionTextJA || '(No text)'}
-            <button
-              onClick={() => {
-                setQuestions((prev) => {
-                  const next = [...prev];
-                  next[index] = { ...prev[index], showVIQuestion: !prev[index].showVIQuestion };
-                  return next;
-                });
-              }}
-              style={{ marginLeft: 8, padding: '2px 6px', border: '1px solid #ddd', borderRadius: 6, fontSize: 12 }}
-            >
-              VI
-            </button>
           </div>
+
+          {/* ✅ badge vị trí chính thức trong đề */}
+          {typeof cur.officialPosition === 'number' && (
+            <span style={{ border: '1px solid #e5e7eb', borderRadius: 999, padding: '2px 8px', fontSize: 12 }}>
+              位置 {cur.officialPosition}
+            </span>
+          )}
+
+          {/* ✅ badge cấp độ nhận thức */}
+          {cur.cognitiveLevel && (
+            <span style={{ border: '1px solid #e5e7eb', borderRadius: 999, padding: '2px 8px', fontSize: 12 }}>
+              {cur.cognitiveLevel}
+            </span>
+          )}
+
+          {/* nút VI (giữ nguyên) */}
+          <button
+            onClick={() => {
+              setQuestions((prev) => {
+                const next = [...prev];
+                next[index] = { ...prev[index], showVIQuestion: !prev[index].showVIQuestion };
+                return next;
+              });
+            }}
+            aria-pressed={!!cur.showVIQuestion}
+            style={{ marginLeft: 8, padding: '2px 6px', border: '1px solid #ddd', borderRadius: 6, fontSize: 12 }}
+            >
+            VI
+          </button>
+        </div>
+
 
           {cur.showVIQuestion && cur.questionTextVI && (
             <div style={{ color: '#475467', marginBottom: 6 }}>{cur.questionTextVI}</div>

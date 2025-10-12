@@ -1,15 +1,37 @@
 // src/lib/qa/formatters.ts
+// -------------------------------------------------------------------
+// Nhiệm vụ:
+// 1) Map 1 hàng snapshot (QuestionSnapshotItem) -> QARenderItem cho UI.
+// 2) Xáo trộn đáp án (hỗ trợ seed).
+//
+// Cập nhật/fix:
+// - Thêm trường id cho mỗi QAOption (bắt buộc theo schema):
+//     id = `${q.questionId}__opt${i}`
+// - Pass-through 2 field mới: officialPosition, cognitiveLevel
+// - Không dùng alias "@/..." để tránh lỗi đường dẫn trên Vercel.
+// -------------------------------------------------------------------
+
 import type { QARenderItem, QuestionSnapshotItem, QAOption } from "./schema";
 
-/** Chọn JA/VI với display ưu tiên VI nếu có, fallback JA */
-export function pickJV(ja?: string, vi?: string): { ja?: string; vi?: string; display: string } {
-  const display = (vi && String(vi).trim()) || (ja && String(ja).trim()) || "";
+/** Ưu tiên hiển thị VI, fallback JA */
+export function pickJV(
+  ja?: string,
+  vi?: string
+): { ja?: string; vi?: string; display: string } {
+  const display =
+    (vi && String(vi).trim()) || (ja && String(ja).trim()) || "";
   return { ja, vi, display };
 }
 
-/** Tạo 1 QARenderItem từ 1 dòng snapshot, ĐÃ gán option.id ổn định và lọc option rỗng */
+/**
+ * Map 1 snapshot -> QARenderItem
+ * - Duyệt 5 option (1..5)
+ * - BỔ SUNG id cho option theo quy ước `${questionId}__opt${i}`
+ * - Pass-through officialPosition & cognitiveLevel
+ */
 export function toQARenderItem(q: QuestionSnapshotItem): QARenderItem {
   const opts: QAOption[] = [];
+
   for (let i = 1; i <= 5; i++) {
     const textJA = (q as any)[`option${i}TextJA`];
     const textVI = (q as any)[`option${i}TextVI`];
@@ -18,22 +40,22 @@ export function toQARenderItem(q: QuestionSnapshotItem): QARenderItem {
     const expJA  = (q as any)[`option${i}ExplanationJA`];
     const expVI  = (q as any)[`option${i}ExplanationVI`];
 
-    // Bỏ option trống hoàn toàn
+    // Bỏ option rỗng hoàn toàn
     if (!(textJA || textVI || image)) continue;
 
-    // GÁN id ổn định để giữ mapping khi shuffle (vẫn giữ key cho UI nếu đang dùng)
+    // ✅ BẮT BUỘC id cho QAOption
     const id = `${q.questionId}__opt${i}`;
 
     opts.push({
-      key: i,
-      id,                   // <- id ổn định
+      id,            // <-- fix TypeScript: QAOption yêu cầu id:string
+      key: i,        // key:number (1..5)
       textJA,
       textVI,
       image,
       isAnswer: isAns,
       explanationJA: expJA,
       explanationVI: expVI,
-    });
+    } as QAOption);
   }
 
   return {
@@ -41,6 +63,7 @@ export function toQARenderItem(q: QuestionSnapshotItem): QARenderItem {
     courseId: q.courseId,
     subjectId: q.subjectId,
     examYear: q.examYear,
+
     difficulty: q.difficulty,
     sourceNote: q.sourceNote,
     tags: q.tags,
@@ -54,34 +77,17 @@ export function toQARenderItem(q: QuestionSnapshotItem): QARenderItem {
     explanationGeneralJA: q.explanationGeneralJA,
     explanationGeneralVI: q.explanationGeneralVI,
     explanationImage: q.explanationImage,
+
+    // Pass-through 2 field mới
+    officialPosition: (q as any).officialPosition ?? null,
+    cognitiveLevel: (q as any).cognitiveLevel ?? null,
   };
 }
 
-/** Validator cho 1 câu: 0 đúng → error; 1 đúng → OK; 2 đúng → warn (cho qua); >2 đúng → error */
-function validateOne(item: QARenderItem) {
-  const correctCount = (item.options || []).filter(o => !!o.isAnswer).length;
-  if (correctCount === 0) throw new Error(`[QA:ERROR] ${item.id}: no correct answer`);
-  if (correctCount === 1) return; // OK
-  if (correctCount === 2) {
-    // Cho phép (multi-correct <1%), chỉ cảnh báo một lần
-    // eslint-disable-next-line no-console
-    console.warn(`[QA:WARN] ${item.id}: two correct answers (allowed)`);
-    return;
-  }
-  throw new Error(`[QA:ERROR] ${item.id}: more than 2 correct answers (${correctCount})`);
-}
-
-/** Chuẩn hóa & validate cả danh sách snapshot → render items */
-export function toQARenderItems(rows: QuestionSnapshotItem[]): QARenderItem[] {
-  const items = rows.map(toQARenderItem);
-  for (const it of items) validateOne(it);
-  return items;
-}
-
-/** Fisher–Yates shuffle với seed (nếu cần) — GIỮ nguyên id để chấm điểm an toàn */
+/** Xáo trộn Fisher–Yates, hỗ trợ seed tái lập */
 export function shuffleOptions<T extends QAOption>(arr: T[], seed?: number): T[] {
-  let a = [...arr];
-  let rnd = seedRandom(seed);
+  const a = [...arr];
+  const rnd = seedRandom(seed);
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(rnd() * (i + 1));
     [a[i], a[j]] = [a[j], a[i]];
@@ -89,11 +95,14 @@ export function shuffleOptions<T extends QAOption>(arr: T[], seed?: number): T[]
   return a;
 }
 
+/** PRNG đơn giản dựa trên xorshift; fallback Math.random khi không có seed */
 function seedRandom(seed?: number) {
   if (typeof seed !== "number") return Math.random;
   let x = seed || 123456789;
   return () => {
-    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
     return ((x >>> 0) % 1_000_000) / 1_000_000;
   };
 }

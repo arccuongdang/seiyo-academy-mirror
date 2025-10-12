@@ -48,3 +48,11 @@ export type GradeResult = {
   /** có nhiều đáp án đúng? */
   multiCorrect: boolean;
 };
+
+export type CognitiveLevel = "Remember" | "Understand" | "Apply" | "Analyze";
+
+export interface QuestionItem {
+  // ...cũ...
+  officialPosition?: number | null;
+  cognitiveLevel?: CognitiveLevel | null;
+}

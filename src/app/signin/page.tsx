@@ -1,37 +1,40 @@
 'use client';
 
-import React, { Suspense, useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { db, signInWithGoogle, signInWithEmail, signUpWithEmail, waitForUser } from '../../lib/firebase/client';
+import { db, signInWithGoogle, signInWithEmail, signUpWithEmail, waitForUser, doSignOut } from '../../lib/firebase/client';
 import { doc, getDoc } from 'firebase/firestore';
 
 function SignInInner() {
   const router = useRouter();
   const q = useSearchParams();
   const mode = q.get('mode') || 'login'; // 'signup' | 'login'
-
   const [email, setEmail] = useState('');
   const [pwd, setPwd] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [session, setSession] = useState<{ uid: string; hasProfile: boolean } | null>(null);
 
-  // Nếu đã đăng nhập từ trước, điều hướng theo hồ sơ
+  // Đọc trạng thái hiện tại (nếu đã đăng nhập) nhưng KHÔNG tự redirect
   useEffect(() => {
     (async () => {
       const u = await waitForUser();
-      if (!u) return;
+      if (!u) {
+        setSession(null);
+        return;
+      }
       const snap = await getDoc(doc(db, 'users', u.uid));
       const hasProfile = snap.exists() && snap.data()?.profileComplete === true;
-      router.replace(hasProfile ? '/courses' : '/onboarding');
+      setSession({ uid: u.uid, hasProfile });
     })();
-  }, [router]);
+  }, []);
 
   const afterLogin = async () => {
     const u = await waitForUser();
     if (!u) return;
     const snap = await getDoc(doc(db, 'users', u.uid));
     const hasProfile = snap.exists() && snap.data()?.profileComplete === true;
-    router.push(hasProfile ? '/courses' : '/onboarding');
+    router.push(hasProfile ? '/courses' : '/onboarding?reason=need_profile');
   };
 
   const doGoogle = async () => {
@@ -39,13 +42,11 @@ function SignInInner() {
     catch (e: any) { setErr(e?.message || 'Login failed'); }
     finally { setLoading(false); }
   };
-
   const doEmailLogin = async () => {
     try { setErr(null); setLoading(true); await signInWithEmail(email, pwd); await afterLogin(); }
     catch (e: any) { setErr(e?.message || 'Login failed'); }
     finally { setLoading(false); }
   };
-
   const doEmailSignUp = async () => {
     try { setErr(null); setLoading(true); await signUpWithEmail(email, pwd); await afterLogin(); }
     catch (e: any) { setErr(e?.message || 'Sign up failed'); }
@@ -57,6 +58,24 @@ function SignInInner() {
       <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>
         {mode === 'signup' ? '新規登録 / Tạo tài khoản' : 'ログイン / Đăng nhập'}
       </h1>
+
+      {/* Banner nếu đã có phiên */}
+      {session && (
+        <div style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 12, background: '#f9fafb' }}>
+          <div style={{ marginBottom: 8 }}>Bạn đang đăng nhập. Chọn hành động:</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button onClick={() => router.push('/courses')} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #175cd3', background: '#175cd3', color: '#fff' }}>
+              Vào Courses
+            </button>
+            <button onClick={() => router.push('/onboarding?reason=need_profile')} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #ddd', background: '#fff' }}>
+              Tới Onboarding
+            </button>
+            <button onClick={async () => { await doSignOut(); setSession(null); }} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #ef4444', background: '#fff', color: '#ef4444' }}>
+              Đăng xuất
+            </button>
+          </div>
+        </div>
+      )}
 
       <button onClick={doGoogle} disabled={loading}
         style={{ padding: '10px 14px', border: '1px solid #ddd', borderRadius: 8, marginBottom: 12 }}>
