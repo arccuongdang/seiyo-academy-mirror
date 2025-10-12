@@ -46,13 +46,13 @@ type ViewQuestion = {
   options: QAOption[];
 
   // UI state per-question
-  selectedId?: string | null; // option.key dạng string
+  selectedId?: number | null; // đổi sang number|null
   submitted?: boolean;        // đã chấm chưa (sau khi nộp toàn bài)
   isCorrect?: boolean;        // kết quả của câu
 
   // Toggle dịch
   showVIQuestion?: boolean;
-  showVIOption?: Record<string, boolean>; // optionKey → true/false
+  showVIOption?: Record<number, boolean>; // index theo key (number) → true/false
 };
 
 type ScoreSummary = { total: number; correct: number; blank: number };
@@ -131,16 +131,12 @@ function YearPracticeInner({ params }: { params: { course: string } }) {
           questionTextJA: q.questionTextJA ?? '',
           questionTextVI: q.questionTextVI ?? '',
           questionImage: q.questionImage ?? null,
-          options: q.options.map((opt) => ({
-            ...opt,
-            // ép key về string cho nhất quán khi lưu/so sánh
-            key: String(opt.key),
-          })),
-          selectedId: null,
+          options: q.options,              // ❗ không ép key sang string nữa
+          selectedId: null,                // number|null
           submitted: false,
           isCorrect: undefined,
           showVIQuestion: false,
-          showVIOption: {},
+          showVIOption: {} as Record<number, boolean>,
         }));
 
         setQuestions(viewList);
@@ -197,7 +193,7 @@ function YearPracticeInner({ params }: { params: { course: string } }) {
   // 4) Chọn đáp án cho 1 câu (single-choice)
   //    - Không chấm ngay; chỉ ghi selectedId
   // -------------------------------------------------
-  const onSelect = (qIdx: number, optionKey: string) => {
+  const onSelect = (qIdx: number, optionKey: number) => {
     setQuestions((prev) => {
       const next = [...prev];
       const q = next[qIdx];
@@ -218,9 +214,9 @@ function YearPracticeInner({ params }: { params: { course: string } }) {
     try {
       // Tính điểm từ questions hiện tại
       const local = questions.map((q) => {
-        const correctIds = q.options.filter((o) => o.isAnswer).map((o) => String(o.key));
-        const isCorrect = q.selectedId ? correctIds.includes(q.selectedId) : false;
-        const isBlank = !q.selectedId;
+        const correctIds = q.options.filter((o) => o.isAnswer).map((o) => o.key); // number[]
+        const isCorrect = q.selectedId != null ? correctIds.includes(q.selectedId) : false;
+        const isBlank = q.selectedId == null;
         return { id: q.id, isCorrect, isBlank };
       });
 
@@ -375,8 +371,9 @@ function YearPracticeInner({ params }: { params: { course: string } }) {
           {questions
             .filter((q) => (tab === 'all' ? true : q.isCorrect === false))
             .map((q, idx) => {
-              const selected = q.options.find((o) => String(o.key) === q.selectedId);
-              const corrects = q.options.filter((o) => o.isAnswer).map((o) => String(o.key));
+              const selected = q.options.find((o) => o.key === q.selectedId);
+              const corrects = q.options.filter((o) => o.isAnswer).map((o) => o.key); // number[]
+
               const isCorrect = q.isCorrect === true;
 
               return (
@@ -415,13 +412,13 @@ function YearPracticeInner({ params }: { params: { course: string } }) {
                       const isAns = opt.isAnswer;
                       const picked = String(opt.key) === q.selectedId;
                       return (
-                        <li key={String(opt.key)} style={{
+                        <li key={opt.key} style={{
                           border: '1px solid #f0f0f0',
                           borderRadius: 8, padding: 10, marginBottom: 8,
                           background: isAns ? '#ecfdf5' : (picked && !isAns ? '#fef2f2' : '#fff')
                         }}>
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                            <strong>{String(opt.key)}.</strong>
+                            <strong>{opt.key}.</strong>
                             <span>{opt.textJA || '(No text)'}</span>
                             <button
                               onClick={() => {
@@ -429,7 +426,7 @@ function YearPracticeInner({ params }: { params: { course: string } }) {
                                   const next = [...prev];
                                   const cur = next[idx];
                                   const s = { ...(cur.showVIOption || {}) };
-                                  const k = String(opt.key);
+                                  const k = opt.key;
                                   s[k] = !s[k];
                                   next[idx] = { ...cur, showVIOption: s };
                                   return next;
@@ -538,17 +535,17 @@ function YearPracticeInner({ params }: { params: { course: string } }) {
 
             <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
               {q.options.map((opt) => {
-                const picked = String(opt.key) === q.selectedId;
+                const picked = opt.key === q.selectedId;
                 return (
                   <li key={String(opt.key)} style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, marginBottom: 8 }}>
                     <label style={{ display: 'flex', alignItems: 'baseline', gap: 8, cursor: 'pointer' }}>
                       <input
                         type="radio"
                         checked={picked}
-                        onChange={() => onSelect(idx, String(opt.key))}
+                        onChange={() => onSelect(idx, opt.key)}
                         style={{ marginTop: 2 }}
                       />
-                      <strong>{String(opt.key)}.</strong>
+                      <strong>{opt.key}.</strong>
                       <span>{opt.textJA || '(No text)'}</span>
                       <button
                         onClick={(e) => {
@@ -557,7 +554,7 @@ function YearPracticeInner({ params }: { params: { course: string } }) {
                             const next = [...prev];
                             const cur = next[idx];
                             const s = { ...(cur.showVIOption || {}) };
-                            const k = String(opt.key);
+                            const k = opt.key;
                             s[k] = !s[k];
                             next[idx] = { ...cur, showVIOption: s };
                             return next;
@@ -568,7 +565,7 @@ function YearPracticeInner({ params }: { params: { course: string } }) {
                         VI
                       </button>
                     </label>
-                    {q.showVIOption?.[String(opt.key)] && opt.textVI && (
+                    {q.showVIOption?.[opt.key] && opt.textVI && (
                       <div style={{ color: '#475467', marginTop: 4 }}>{opt.textVI}</div>
                     )}
                   </li>
