@@ -11,7 +11,7 @@ export async function loadManifest(): Promise<Manifest> {
  * Trả về: string | null (tên file JSON)
  */
 export function pickLatestFile(
-  manifest: Manifest,
+  manifest: Manifest | any,   // 👈 cho phép nhận cả format mới
   courseId: string,
   subjectId: string
 ): string | null {

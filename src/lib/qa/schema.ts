@@ -123,17 +123,22 @@ export interface QARenderItem {
 
 
 export interface ManifestEntry {
+  subjectId?: string;      // format phẳng: cần subjectId
   filename: string;
   publishedAt?: string;
   count?: number;
   note?: string;
 }
 
-export interface Manifest {
-  [courseId: string]: {
-    [subjectId: string]: ManifestEntry[];
-  };
-}
+
+
+// Hỗ trợ cả 2 kiểu:
+// - Phẳng: { [courseId]: ManifestEntry[] }
+// - Lồng:  { [courseId]: { [subjectId]: ManifestEntry[] | string[] } }
+export type Manifest = Record<
+  string,
+  ManifestEntry[] | Record<string, ManifestEntry[] | string[]>
+>;
 
 /**
  * Subject snapshot JSON mà frontend tải về khi chọn course/subject:

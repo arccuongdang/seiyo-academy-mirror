@@ -1,43 +1,156 @@
 'use client';
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-// ⛳️ Import TRỰC TIẾP
-import { loadManifest } from "../../../lib/qa/excel";
+/**
+ * Trang chọn môn cho một khóa học (course).
+ * - Đọc manifest để biết môn nào có dữ liệu (ẩn môn rỗng).
+ * - Hỗ trợ mọi format manifest (phẳng theo course / lồng theo subject / mảng filename string[]).
+ * - Bọc AuthGate + ProfileGate theo chính sách điều hướng bạn đã đặt.
+ */
+
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+
+// Data loaders
+import { loadManifest } from '../../../lib/qa/excel';
 import type { Manifest } from '../../../lib/qa/schema';
 
-export default function CoursesPage() {
+// Gates
+import AuthGate from '../../../components/AuthGate';
+import ProfileGate from '../../../components/ProfileGate';
+
+// ----------------- helpers -----------------
+
+/**
+ * Lấy danh sách subject khả dụng từ manifest cho 1 course.
+ * Hỗ trợ 3 cấu trúc:
+ *  A) Phẳng: manifest[courseId] = [{ subjectId, filename, publishedAt }, ...]
+ *  B) Lồng:  manifest[courseId][subjectId] = ManifestEntry[]
+ *  C) Lồng-cũ: manifest[courseId][subjectId] = string[] (chỉ filename)
+ */
+function getAvailableSubjects(manifest: Manifest | null, courseId: string): string[] {
+  if (!manifest) return [];
+  const courseBlock: any = (manifest as any)[courseId];
+  if (!courseBlock) return [];
+
+  // A) Phẳng theo course: mảng entries
+  if (Array.isArray(courseBlock)) {
+    const set = new Set<string>();
+    for (const e of courseBlock) {
+      if (e?.subjectId && e?.filename) set.add(String(e.subjectId));
+    }
+    return Array.from(set).sort();
+  }
+
+  // B/C) Lồng theo subjectId
+  if (typeof courseBlock === 'object') {
+    return Object.keys(courseBlock)
+      .filter((sid) => {
+        const list = (courseBlock as any)[sid];
+        return Array.isArray(list) && list.length > 0; // chỉ lấy các subject có dữ liệu
+      })
+      .sort();
+  }
+
+  return [];
+}
+
+// ----------------- page -----------------
+
+export default function CoursePage({ params }: { params: { course: string } }) {
+  const { course } = params;
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // Tải manifest khi vào trang
   useEffect(() => {
     loadManifest()
-      .then((m) => setManifest(() => m))    // ✅ dùng functional updater
-      .catch((e) => setErr(e?.message || "Không tải được manifest"));
+      .then((m) => setManifest(() => m)) // dùng functional updater để khớp SetStateAction<Manifest|null>
+      .catch((e) => setErr(e?.message || 'Không tải được manifest'));
   }, []);
 
-  if (err) return <main className="p-8 text-red-600">Lỗi: {err}</main>;
-  if (!manifest) return <main className="p-8">Đang tải dữ liệu...</main>;
+  const subjects = useMemo(() => getAvailableSubjects(manifest, course), [manifest, course]);
 
-  const courseIds = Object.keys(manifest);
+  // ------------- render -------------
 
   return (
-    <main className="p-8 space-y-4">
-      <h1 className="text-2xl font-bold mb-4">Danh sách khóa học</h1>
-      <div className="grid md:grid-cols-3 gap-4">
-        {courseIds.map((courseId) => (
-          <Link
-            key={courseId}
-            href={`/courses/${courseId}/practice`}
-            className="border rounded-xl shadow hover:shadow-lg p-4 bg-white"
-          >
-            <div className="text-lg font-semibold">{courseId}</div>
-            <div className="text-sm text-gray-500">
-              {Object.keys(manifest[courseId]).length} môn
+    <AuthGate>
+      <ProfileGate>
+        <main style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
+          <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>
+            {course} — Môn học
+          </h1>
+
+          {err && (
+            <div style={{ color: 'crimson', marginBottom: 12 }}>
+              Lỗi: {err}
             </div>
-          </Link>
-        ))}
-      </div>
-    </main>
+          )}
+
+          {!manifest && !err && <div>Đang tải dữ liệu…</div>}
+
+          {manifest && subjects.length === 0 && (
+            <div style={{ color: '#475467' }}>
+              Hiện chưa có dữ liệu môn học cho khóa {course}. Vui lòng quay lại sau.
+            </div>
+          )}
+
+          {subjects.length > 0 && (
+            <section style={{ display: 'grid', gap: 12 }}>
+              {subjects.map((sid) => (
+                <div
+                  key={sid}
+                  style={{
+                    border: '1px solid #eee',
+                    borderRadius: 12,
+                    padding: 16,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 16 }}>
+                    {sid}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {/* Luyện theo môn (bộ lọc tuỳ biến) */}
+                    <Link
+                      href={`/courses/${course}/practice/start?subject=${encodeURIComponent(sid)}`}
+                      style={{
+                        padding: '8px 12px',
+                        border: '1px solid #175cd3',
+                        borderRadius: 8,
+                        background: '#175cd3',
+                        color: '#fff',
+                        fontWeight: 700,
+                      }}
+                    >
+                      Luyện theo môn
+                    </Link>
+
+                    {/* Thi theo năm (dẫn tới trang chọn năm hoặc mặc định năm mới nhất) */}
+                    <Link
+                      href={`/courses/${course}/practice/year?subject=${encodeURIComponent(sid)}`}
+                      style={{
+                        padding: '8px 12px',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: 8,
+                        background: '#fff',
+                        color: '#111',
+                        fontWeight: 700,
+                      }}
+                    >
+                      Thi theo năm
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
+        </main>
+      </ProfileGate>
+    </AuthGate>
   );
 }

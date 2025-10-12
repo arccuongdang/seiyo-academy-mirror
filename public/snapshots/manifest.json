@@ -1,10 +1,9 @@
 {
-  "KTS2": {
-    "TK": [
-      "TK-questions.v1760255773498.json"
-    ],
-    "L": [],
-    "KC": [],
-    "TC": []
-  }
+  "KTS2": [
+    { "subjectId": "TK", "filename": "TK-questions.v1760255773498.json", "publishedAt": "2025-10-12T07:00:00Z" }
+  ]
 }
+
+
+  // Có thêm khóa khác thì thêm key khác:
+  // "KTS1": [ ...entries cùng cấu trúc... ]
