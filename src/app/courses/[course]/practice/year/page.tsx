@@ -8,7 +8,6 @@ import { toQARenderItems, shuffleOptions } from '../../../../../lib//qa/formatte
 import { gradeSingleChoice } from '../../../../../lib/qa/grade';
 import { toFuriganaHtml } from '../../../../../lib/jp/kuroshiro';
 import type { QARenderItem, QAOption } from '../../../../../lib/qa/schema';
-import AuthGate from '../../../../../components/AuthGate';
 
 
 type ViewQuestion = QARenderItem & {
@@ -30,6 +29,14 @@ type ViewQuestion = QARenderItem & {
 };
 
 type FilterTab = 'all' | 'wrong' | 'blank';
+
+const [finished, setFinished] = useState(false);
+const [tab, setTab] = useState<'all'|'wrong'>('all');
+const [score, setScore] = useState<{ total: number; correct: number; blank: number }>({ total: 0, correct: 0, blank: 0 });
+// questions đang có sẵn từ trước (mảng QARenderItem đã chấm điểm)
+
+const [durationSec, setDurationSec] = useState<number | null>(null);
+
 
 export default function YearPracticePage({ params }: { params: { course: string } }) {
   const { course } = params;
@@ -114,8 +121,81 @@ export default function YearPracticePage({ params }: { params: { course: string 
   };
 
   const onSelect = (qIdx: number, optionId: string) => {
-    if (finished) return; // khi đã kết thúc không cho đổi
-    setQuestions((prev) => prev.map((q, i) => (i === qIdx ? { ...q, selectedId: optionId } : q)));
+    if (finished) {
+      const pct = score.total ? Math.round((score.correct / score.total) * 100) : 0;
+
+      return (
+        <main style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
+          <h1 style={{ fontSize: 20, fontWeight: 800, marginBottom: 12 }}>
+            {params.course} / {subject} — Kết quả bài {(questions[0]?.examYear ?? '—')}年度
+          </h1>
+
+          <section style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+            <div style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                <div style={{ fontSize: 16, fontWeight: 700 }}>Tổng hợp điểm</div>
+                <div style={{ marginLeft: 'auto', color: '#667085' }}>
+                  正答 {score.correct}/{score.total}（{pct}%）・未回答 {score.blank}
+                </div>
+              </div>
+
+              {/* thanh tiến độ */}
+              <div style={{ marginTop: 10, height: 8, background: '#f2f4f7', borderRadius: 999 }}>
+                <div
+                  style={{
+                    width: `${pct}%`, height: 8, borderRadius: 999, background: '#16a34a',
+                    transition: 'width 300ms ease'
+                  }}
+                />
+              </div>
+
+              {/* thời lượng (nếu bạn có durationSec trong state) */}
+              {typeof durationSec === 'number' && (
+                <div style={{ marginTop: 8, color: '#667085' }}>
+                  Thời gian làm: <b>{Math.floor(durationSec / 60)}m{durationSec % 60}s</b>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => setTab('all')}
+                  style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #ddd', background: tab === 'all' ? '#eef2ff' : '#fff' }}
+                >
+                  Xem lại tất cả
+                </button>
+                <button
+                  onClick={() => setTab('wrong')}
+                  style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #ddd', background: tab === 'wrong' ? '#fee2e2' : '#fff' }}
+                >
+                  Chỉ câu sai
+                </button>
+              </div>
+            </div>
+          </section>
+
+          {/* vùng review (giữ logic render câu hiện có, chỉ lọc theo tab) */}
+          <section style={{ display: 'grid', gap: 12 }}>
+            {questions
+              .filter(q => tab === 'all' ? true : !q.isCorrect)
+              .map((q, idx) => (
+                <div key={q.id} style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                    Câu {idx + 1}: {q.questionTextJA || '(No text)'}
+                  </div>
+
+                  {/* ... phần hiển thị đáp án của bạn (giữ nguyên), kèm giải thích, nút VI/JA ... */}
+                </div>
+              ))}
+          </section>
+
+          <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+            <a href={`/courses/${params.course}`} style={{ color: '#175cd3', textDecoration: 'underline' }}>
+              ← Quay lại môn học
+            </a>
+          </div>
+        </main>
+      ); 
+    }
   };
 
   const endExamAndGrade = () => {
@@ -205,35 +285,27 @@ export default function YearPracticePage({ params }: { params: { course: string 
 
   if (!subject || !year) {
   return (
-    <AuthGate>
-      <main style={{ padding: 24 }}>
-        Thiếu tham số <code>?subject=...</code> và/hoặc <code>?year=...</code> (VD: <code>?subject=TK&year=2022</code>)
-      </main>
-    </AuthGate>
+    <main style={{ padding: 24 }}>
+      Thiếu tham số <code>?subject=...</code> và/hoặc <code>?year=...</code> (VD: <code>?subject=TK&year=2022</code>)
+    </main>
   );
   }
 
   if (loading) {
     return (
-      <AuthGate>
-        <main style={{ padding: 24 }}>Đang tải đề…</main>
-      </AuthGate>
-    );
+      <main style={{ padding: 24 }}>Đang tải đề…</main>
+      );
   }
 
   if (err) {
     return (
-      <AuthGate>
-        <main style={{ padding: 24, color: 'crimson' }}>Lỗi: {err}</main>
-      </AuthGate>
+      <main style={{ padding: 24, color: 'crimson' }}>Lỗi: {err}</main>
     );
   }
 
   if (questions.length === 0) {
     return (
-      <AuthGate>
-        <main style={{ padding: 24 }}>Chưa có câu hỏi.</main>
-      </AuthGate>
+      <main style={{ padding: 24 }}>Chưa có câu hỏi.</main>
     );
   }
 
@@ -241,63 +313,61 @@ export default function YearPracticePage({ params }: { params: { course: string 
   if (!finished) {
     // === Doing exam (no per-question explanations) ===
     return (
-      <AuthGate>
-        <main style={{ padding: 24 }}>
-          <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
-            {course} / {subject} — {year} 年度 過去問
-          </h1>
+      <main style={{ padding: 24 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
+          {course} / {subject} — {year} 年度 過去問
+        </h1>
 
-          {/* Progress + Nav */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <button
-              onClick={() => goto(index - 1)}
-              disabled={index === 0}
-              style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}
-            >
-              前へ / Trước
-            </button>
-            <div style={{ flex: 1, textAlign: 'center' }}>
-              {index + 1} / {questions.length}
-            </div>
-            <button
-              onClick={() => goto(index + 1)}
-              disabled={index === questions.length - 1}
-              style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}
-            >
-              次へ / Tiếp
-            </button>
+        {/* Progress + Nav */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <button
+            onClick={() => goto(index - 1)}
+            disabled={index === 0}
+            style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}
+          >
+            前へ / Trước
+          </button>
+          <div style={{ flex: 1, textAlign: 'center' }}>
+            {index + 1} / {questions.length}
           </div>
+          <button
+            onClick={() => goto(index + 1)}
+            disabled={index === questions.length - 1}
+            style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}
+          >
+            次へ / Tiếp
+          </button>
+        </div>
 
-          {/* Question card */}
-          <QuestionCard
-            q={cur}
-            idx={index}
-            readOnly={false} // chưa kết thúc -> cho chọn/đổi đáp án
-            onSelect={onSelect}
-            toggleVIQuestion={toggleVIQuestion}
-            toggleVIOption={toggleVIOption}
-            toggleJAQuestion={toggleJAQuestion}
-            toggleJAOption={toggleJAOption}
-          />
+        {/* Question card */}
+        <QuestionCard
+          q={cur}
+          idx={index}
+          readOnly={false} // chưa kết thúc -> cho chọn/đổi đáp án
+          onSelect={onSelect}
+          toggleVIQuestion={toggleVIQuestion}
+          toggleVIOption={toggleVIOption}
+          toggleJAQuestion={toggleJAQuestion}
+          toggleJAOption={toggleJAOption}
+        />
 
-          {/* End Exam */}
-          <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
-            <button
-              onClick={endExamAndGrade}
-              style={{
-                padding: '10px 14px',
-                borderRadius: 8,
-                border: '1px solid #175cd3',
-                color: '#fff',
-                background: '#175cd3',
-                fontWeight: 700,
-              }}
-            >
-              試験を終了 / Kết thúc bài
-            </button>
-          </div>
-        </main>
-      </AuthGate>
+        {/* End Exam */}
+        <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+          <button
+            onClick={endExamAndGrade}
+            style={{
+              padding: '10px 14px',
+              borderRadius: 8,
+              border: '1px solid #175cd3',
+              color: '#fff',
+              background: '#175cd3',
+              fontWeight: 700,
+            }}
+          >
+            試験を終了 / Kết thúc bài
+          </button>
+        </div>
+      </main>
     );
   }
 
@@ -313,50 +383,48 @@ export default function YearPracticePage({ params }: { params: { course: string 
   const percent = Math.round((score.correct / score.total) * 100);
 
   return (
-    <AuthGate>
-      <main style={{ padding: 24 }}>
-        <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
-          {course} / {subject} — {year} 年度 結果 / Kết quả
-        </h1>
+    <main style={{ padding: 24 }}>
+      <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
+        {course} / {subject} — {year} 年度 結果 / Kết quả
+      </h1>
 
-        {/* Score box */}
-        <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
-          <div style={{ border: '1px solid #eee', borderRadius: 10, padding: 12, minWidth: 180 }}>
-            <div style={{ fontSize: 12, color: '#475467' }}>正答数 / Số câu đúng</div>
-            <div style={{ fontSize: 22, fontWeight: 800 }}>{score.correct} / {score.total}（{percent}%）</div>
-          </div>
-          <div style={{ border: '1px solid #eee', borderRadius: 10, padding: 12, minWidth: 180 }}>
-            <div style={{ fontSize: 12, color: '#475467' }}>未回答 / Chưa làm</div>
-            <div style={{ fontSize: 22, fontWeight: 800 }}>{score.blank}</div>
-          </div>
+      {/* Score box */}
+      <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ border: '1px solid #eee', borderRadius: 10, padding: 12, minWidth: 180 }}>
+          <div style={{ fontSize: 12, color: '#475467' }}>正答数 / Số câu đúng</div>
+          <div style={{ fontSize: 22, fontWeight: 800 }}>{score.correct} / {score.total}（{percent}%）</div>
         </div>
-
-        {/* Filter tabs */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <button
-            onClick={() => setTab('all')}
-            style={tabBtnStyle(tab === 'all')}
-          >全問 / Tất cả</button>
-          <button
-            onClick={() => setTab('wrong')}
-            style={tabBtnStyle(tab === 'wrong')}
-          >不正解 / Sai</button>
-          <button
-            onClick={() => setTab('blank')}
-            style={tabBtnStyle(tab === 'blank')}
-          >未回答 / Chưa làm</button>
+        <div style={{ border: '1px solid #eee', borderRadius: 10, padding: 12, minWidth: 180 }}>
+          <div style={{ fontSize: 12, color: '#475467' }}>未回答 / Chưa làm</div>
+          <div style={{ fontSize: 22, fontWeight: 800 }}>{score.blank}</div>
         </div>
+      </div>
 
-        {/* Review list (reveal explanations now) */}
-        {list.map((q, idx) => (
-          <ReviewCard
-            key={q.id}
-            q={q}
-            indexLabel={`問 ${questions.findIndex(x => x.id === q.id) + 1}`}
-          />
-        ))}
-      </main>
-    </AuthGate>
+      {/* Filter tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <button
+          onClick={() => setTab('all')}
+          style={tabBtnStyle(tab === 'all')}
+        >全問 / Tất cả</button>
+        <button
+          onClick={() => setTab('wrong')}
+          style={tabBtnStyle(tab === 'wrong')}
+        >不正解 / Sai</button>
+        <button
+          onClick={() => setTab('blank')}
+          style={tabBtnStyle(tab === 'blank')}
+        >未回答 / Chưa làm</button>
+      </div>
+
+      {/* Review list (reveal explanations now) */}
+      {list.map((q, idx) => (
+        <ReviewCard
+          key={q.id}
+          q={q}
+          indexLabel={`問 ${questions.findIndex(x => x.id === q.id) + 1}`}
+        />
+      ))}
+    </main>
   );
 }
 
@@ -391,132 +459,130 @@ function QuestionCard(props: {
   const showJAQ = !!q.showJAQuestion;
 
   return (
-    <AuthGate>
-      <section style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
-          <div style={{ fontWeight: 600, flex: 1 }}>
-            問 {idx + 1}: {titleJA || titleVI || '(No content)'}
-          </div>
-
-          {/* VI & JA for question */}
-          {titleVI && (
-            <button
-              type="button"
-              onClick={() => props.toggleVIQuestion(idx)}
-              style={toggleBtnStyle(showVIQ)}
-              aria-pressed={showVIQ}
-              title="Việt ngữ"
-            >VI</button>
-          )}
-          {titleJA && (
-            <button
-              type="button"
-              onClick={() => props.toggleJAQuestion(idx)}
-              style={toggleBtnStyle(showJAQ)}
-              aria-pressed={showJAQ}
-              title="ふりがな"
-            >JA</button>
-          )}
+    <section style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+        <div style={{ fontWeight: 600, flex: 1 }}>
+          問 {idx + 1}: {titleJA || titleVI || '(No content)'}
         </div>
 
-        {q.questionImage && (
-          <img
-            src={`/images/${q.courseId}/${q.subjectId}/${q.examYear}/${q.questionImage}`}
-            alt=""
-            style={{ maxWidth: '100%', marginBottom: 8 }}
-          />
+        {/* VI & JA for question */}
+        {titleVI && (
+          <button
+            type="button"
+            onClick={() => props.toggleVIQuestion(idx)}
+            style={toggleBtnStyle(showVIQ)}
+            aria-pressed={showVIQ}
+            title="Việt ngữ"
+          >VI</button>
         )}
-
-        {showVIQ && titleVI && <div style={{ marginBottom: 6, color: '#475467' }}>{titleVI}</div>}
-        {showJAQ && q.furiQuestionHtml && (
-          <div
-            style={{ marginBottom: 6, color: '#0f172a' }}
-            dangerouslySetInnerHTML={{ __html: q.furiQuestionHtml }}
-          />
+        {titleJA && (
+          <button
+            type="button"
+            onClick={() => props.toggleJAQuestion(idx)}
+            style={toggleBtnStyle(showJAQ)}
+            aria-pressed={showJAQ}
+            title="ふりがな"
+          >JA</button>
         )}
+      </div>
 
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-          {q.shuffled.map((opt) => {
-            const isChosen = q.selectedId === opt.id;
-            const borderColor = isChosen ? '#175cd3' : '#f0f0f0';
-            const showVIOpt = !!q.showVIOption?.[opt.id!];
-            const showJAOpt = !!q.showJAOption?.[opt.id!];
-            const textJA = opt.textJA || '';
-            const textVI = opt.textVI || '';
+      {q.questionImage && (
+        <img
+          src={`/images/${q.courseId}/${q.subjectId}/${q.examYear}/${q.questionImage}`}
+          alt=""
+          style={{ maxWidth: '100%', marginBottom: 8 }}
+        />
+      )}
 
-            return (
-              <li
-                key={opt.id ?? opt.key}
-                style={{
-                  border: `1px solid ${borderColor}`,
-                  borderRadius: 8,
-                  padding: 10,
-                  marginBottom: 8,
-                  display: 'flex',
-                  gap: 8,
-                  background: isChosen ? '#f7f9ff' : '#fff',
-                  alignItems: 'flex-start',
-                }}
-                onClick={(e) => {
-                  const t = e.target as HTMLElement;
-                  if (t.dataset?.action === 'toggle-vi-opt' || t.dataset?.action === 'toggle-ja-opt') return;
-                  if (!readOnly) props.onSelect(idx, opt.id!);
-                }}
-              >
-                <input
-                  type="radio"
-                  name={`q-${q.id}`}
-                  checked={isChosen}
-                  onChange={() => props.onSelect(idx, opt.id!)}
-                  disabled={readOnly}
-                  style={{ marginTop: 4 }}
-                />
-                <div style={{ flex: 1 }}>
-                  <div>{textJA || textVI || '(No content)'}</div>
-                  {showVIOpt && textVI && <div style={{ marginTop: 4, color: '#475467' }}>{textVI}</div>}
-                  {showJAOpt && q.furiOptionHtml?.[opt.id!] && (
-                    <div
-                      style={{ marginTop: 4, color: '#0f172a' }}
-                      dangerouslySetInnerHTML={{ __html: q.furiOptionHtml![opt.id!] }}
-                    />
-                  )}
-                  {opt.image && (
-                    <img
-                      src={`/images/${q.courseId}/${q.subjectId}/${q.examYear}/${opt.image}`}
-                      alt=""
-                      style={{ maxWidth: '100%', marginTop: 6 }}
-                    />
-                  )}
-                </div>
+      {showVIQ && titleVI && <div style={{ marginBottom: 6, color: '#475467' }}>{titleVI}</div>}
+      {showJAQ && q.furiQuestionHtml && (
+        <div
+          style={{ marginBottom: 6, color: '#0f172a' }}
+          dangerouslySetInnerHTML={{ __html: q.furiQuestionHtml }}
+        />
+      )}
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {textVI && (
-                    <button
-                      type="button"
-                      data-action="toggle-vi-opt"
-                      onClick={() => props.toggleVIOption(idx, opt.id!)}
-                      style={toggleBtnStyle(showVIOpt)}
-                      aria-pressed={showVIOpt}
-                      title="Việt ngữ"
-                    >VI</button>
-                  )}
-                  {textJA && (
-                    <button
-                      type="button"
-                      data-action="toggle-ja-opt"
-                      onClick={() => props.toggleJAOption(idx, opt.id!, textJA)}
-                      style={toggleBtnStyle(showJAOpt)}
-                      aria-pressed={showJAOpt}
-                      title="ふりがな"
-                    >JA</button>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
-    </AuthGate>
+      <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+        {q.shuffled.map((opt) => {
+          const isChosen = q.selectedId === opt.id;
+          const borderColor = isChosen ? '#175cd3' : '#f0f0f0';
+          const showVIOpt = !!q.showVIOption?.[opt.id!];
+          const showJAOpt = !!q.showJAOption?.[opt.id!];
+          const textJA = opt.textJA || '';
+          const textVI = opt.textVI || '';
+
+          return (
+            <li
+              key={opt.id ?? opt.key}
+              style={{
+                border: `1px solid ${borderColor}`,
+                borderRadius: 8,
+                padding: 10,
+                marginBottom: 8,
+                display: 'flex',
+                gap: 8,
+                background: isChosen ? '#f7f9ff' : '#fff',
+                alignItems: 'flex-start',
+              }}
+              onClick={(e) => {
+                const t = e.target as HTMLElement;
+                if (t.dataset?.action === 'toggle-vi-opt' || t.dataset?.action === 'toggle-ja-opt') return;
+                if (!readOnly) props.onSelect(idx, opt.id!);
+              }}
+            >
+              <input
+                type="radio"
+                name={`q-${q.id}`}
+                checked={isChosen}
+                onChange={() => props.onSelect(idx, opt.id!)}
+                disabled={readOnly}
+                style={{ marginTop: 4 }}
+              />
+              <div style={{ flex: 1 }}>
+                <div>{textJA || textVI || '(No content)'}</div>
+                {showVIOpt && textVI && <div style={{ marginTop: 4, color: '#475467' }}>{textVI}</div>}
+                {showJAOpt && q.furiOptionHtml?.[opt.id!] && (
+                  <div
+                    style={{ marginTop: 4, color: '#0f172a' }}
+                    dangerouslySetInnerHTML={{ __html: q.furiOptionHtml![opt.id!] }}
+                  />
+                )}
+                {opt.image && (
+                  <img
+                    src={`/images/${q.courseId}/${q.subjectId}/${q.examYear}/${opt.image}`}
+                    alt=""
+                    style={{ maxWidth: '100%', marginTop: 6 }}
+                  />
+                )}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {textVI && (
+                  <button
+                    type="button"
+                    data-action="toggle-vi-opt"
+                    onClick={() => props.toggleVIOption(idx, opt.id!)}
+                    style={toggleBtnStyle(showVIOpt)}
+                    aria-pressed={showVIOpt}
+                    title="Việt ngữ"
+                  >VI</button>
+                )}
+                {textJA && (
+                  <button
+                    type="button"
+                    data-action="toggle-ja-opt"
+                    onClick={() => props.toggleJAOption(idx, opt.id!, textJA)}
+                    style={toggleBtnStyle(showJAOpt)}
+                    aria-pressed={showJAOpt}
+                    title="ふりがな"
+                  >JA</button>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
