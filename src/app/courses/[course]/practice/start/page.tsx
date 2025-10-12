@@ -28,7 +28,7 @@ import { gradeSingleChoice } from '../../../../../lib/qa/grade';
 import { toFuriganaHtml } from '../../../../../lib/jp/kuroshiro';
 
 // Types
-import type { QARenderItem, QAOption } from '../../../../../lib/qa/schema';
+import type { QARenderItem, QAOption, CognitiveLevel  } from '../../../../../lib/qa/schema';
 
 // Firestore client & helpers
 import { db, requireUser, serverTimestamp } from '../../../../../lib/firebase/client';
@@ -46,6 +46,8 @@ type ViewQuestion = {
   questionTextVI?: string | null;
   questionImage?: string | null;
   options: QAOption[];
+  officialPosition?: number | null;
+  cognitiveLevel?: CognitiveLevel | null;
 
   // Mảng xáo trộn để hiển thị
   shuffled: QAOption[];
