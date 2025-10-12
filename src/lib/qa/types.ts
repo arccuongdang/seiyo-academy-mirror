@@ -1,6 +1,9 @@
 // src/lib/qa/types.ts
 export type Language = "JA" | "VI";
 
+
+export type CognitiveLevel = "Remember" | "Understand" | "Apply" | "Analyze";
+
 export type OptionItem = {
   /** ổn định qua shuffle */
   id: string;
@@ -14,6 +17,8 @@ export type OptionItem = {
   /** giải thích (ưu tiên per-option) */
   explanationJA?: string;
   explanationVI?: string;
+  officialPosition?: number | null;
+  cognitiveLevel?: CognitiveLevel | null;
 };
 
 export type QuestionItem = {
@@ -48,11 +53,3 @@ export type GradeResult = {
   /** có nhiều đáp án đúng? */
   multiCorrect: boolean;
 };
-
-export type CognitiveLevel = "Remember" | "Understand" | "Apply" | "Analyze";
-
-export interface QuestionItem {
-  // ...cũ...
-  officialPosition?: number | null;
-  cognitiveLevel?: CognitiveLevel | null;
-}

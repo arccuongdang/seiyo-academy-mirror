@@ -21,6 +21,10 @@ export type QuestionSnapshotItem = {
   version?: number;
 };
 
+// Thang nhận thức Bloom-lite, dùng cho phân tích
+export type CognitiveLevel = 'Remember' | 'Understand' | 'Apply' | 'Analyze';
+
+
 export type SubjectSnapshot = {
   meta: { courseId: string; subjectId: string; count: number; generatedAt: number };
   items: QuestionSnapshotItem[];
