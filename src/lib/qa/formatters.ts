@@ -1,108 +1,269 @@
-// src/lib/qa/formatters.ts
-// -------------------------------------------------------------------
-// Nhiệm vụ:
-// 1) Map 1 hàng snapshot (QuestionSnapshotItem) -> QARenderItem cho UI.
-// 2) Xáo trộn đáp án (hỗ trợ seed).
-//
-// Cập nhật/fix:
-// - Thêm trường id cho mỗi QAOption (bắt buộc theo schema):
-//     id = `${q.questionId}__opt${i}`
-// - Pass-through 2 field mới: officialPosition, cognitiveLevel
-// - Không dùng alias "@/..." để tránh lỗi đường dẫn trên Vercel.
-// -------------------------------------------------------------------
+/**
+ * ============================================================================
+ *  Seiyo Academy – Formatters (RAW → RENDER + shuffle + i18n fallback)
+ *  Strategy: Option B (RAW JA/VI with fixed 5 options)
+ * ----------------------------------------------------------------------------
+ *  Public API:
+ *   - toQARenderItemFromSnapshot(raw, lang)  → QARenderItem
+ *   - toQARenderList(rawList, lang, opts)    → QARenderItem[]
+ *   - shuffleOptions(options, seed?)         → QARenderOption[] (new array)
+ * ============================================================================
+ */
 
-import type { QARenderItem, QuestionSnapshotItem, QAOption } from "./schema";
+import type {
+  QuestionSnapshotItem,
+  QARenderItem,
+  QARenderOption,
+  Difficulty,
+  SourceCode,
+} from './schema';
 
-/** Ưu tiên hiển thị VI, fallback JA */
-export function pickJV(
-  ja?: string,
-  vi?: string
-): { ja?: string; vi?: string; display: string } {
-  const display =
-    (vi && String(vi).trim()) || (ja && String(ja).trim()) || "";
-  return { ja, vi, display };
+/* =============================================================================
+ * SECTION 1. Utilities – language selection & small helpers
+ * ========================================================================== */
+
+export type UILang = 'JA' | 'VI';
+
+function pickText(ja?: string, vi?: string, lang: UILang = 'JA'): string | undefined {
+  const a = (ja ?? '').trim();
+  const v = (vi ?? '').trim();
+  if (lang === 'VI') {
+    if (v) return v;
+    if (a) return a; // fallback JA
+  } else {
+    if (a) return a;
+    if (v) return v; // fallback VI
+  }
+  return undefined;
+}
+
+function pickExplanation(ja?: string, vi?: string, lang: UILang = 'JA'): string | undefined {
+  // cùng logic fallback như text
+  return pickText(ja, vi, lang);
+}
+
+/** Kiểm tra option có "nội dung" để hiển thị (text hoặc image) */
+function hasOptionContent(text?: string, image?: string | null): boolean {
+  if (text && text.trim() !== '') return true;
+  if (image && String(image).trim() !== '') return true;
+  return false;
+}
+
+/** Chuẩn hoá tag có thể là string CSV hoặc array */
+function normalizeTags(tags?: string[] | string | null): string[] | undefined {
+  if (!tags) return undefined;
+  if (Array.isArray(tags)) return tags.filter(Boolean);
+  // CSV
+  return String(tags)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/* =============================================================================
+ * SECTION 2. Deterministic shuffle (seeded)
+ *  - Xáo trộn mà vẫn reproducible theo seed
+ *  - Fisher–Yates dựa trên PRNG xorshift32
+ * ========================================================================== */
+
+function xorshift32(seed: number): () => number {
+  let x = seed >>> 0 || 1; // tránh 0
+  return () => {
+    // xorshift32
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    // chuyển về [0, 1)
+    return ((x >>> 0) % 0x100000000) / 0x100000000;
+  };
 }
 
 /**
- * Map 1 snapshot -> QARenderItem
- * - Duyệt 5 option (1..5)
- * - BỔ SUNG id cho option theo quy ước `${questionId}__opt${i}`
- * - Pass-through officialPosition & cognitiveLevel
+ * Shuffle QARenderOption[] theo seed (không mutate input).
+ * - Mỗi option đã "tự mang" isAnswer + explanation → chỉ cần đổi thứ tự
  */
-export function toQARenderItem(q: QuestionSnapshotItem): QARenderItem {
-  const opts: QAOption[] = [];
+export function shuffleOptions(options: QARenderOption[], seed?: number | string): QARenderOption[] {
+  const arr = options.slice();
+  if (!seed && seed !== 0) return arr;
 
-  for (let i = 1; i <= 5; i++) {
-    const textJA = (q as any)[`option${i}TextJA`];
-    const textVI = (q as any)[`option${i}TextVI`];
-    const image  = (q as any)[`option${i}Image`];
-    const isAns  = Boolean((q as any)[`option${i}IsAnswer`]);
-    const expJA  = (q as any)[`option${i}ExplanationJA`];
-    const expVI  = (q as any)[`option${i}ExplanationVI`];
+  const s =
+    typeof seed === 'number'
+      ? seed
+      : Array.from(String(seed)).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
 
-    // Bỏ option rỗng hoàn toàn
-    if (!(textJA || textVI || image)) continue;
-
-    // ✅ BẮT BUỘC id cho QAOption
-    const id = `${q.questionId}__opt${i}`;
-
-    opts.push({
-      id,            // <-- fix TypeScript: QAOption yêu cầu id:string
-      key: i,        // key:number (1..5)
-      textJA,
-      textVI,
-      image,
-      isAnswer: isAns,
-      explanationJA: expJA,
-      explanationVI: expVI,
-    } as QAOption);
+  const rnd = xorshift32(s || 1);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
   }
+  return arr;
+}
+
+/* =============================================================================
+ * SECTION 3. RAW → RENDER (single item)
+ *  - Đọc QuestionSnapshotItem (Option B, 5 phương án) và sinh QARenderItem cho UI
+ *  - Chọn ngôn ngữ theo lang, có fallback qua pickText/pickExplanation
+ *  - Filter các option rỗng (không text + không image)
+ * ========================================================================== */
+
+export function toQARenderItemFromSnapshot(
+  raw: QuestionSnapshotItem,
+  lang: UILang = 'JA'
+): QARenderItem {
+  // Text & image (thân đề)
+  const text = pickText(raw.questionTextJA, raw.questionTextVI, lang);
+  const image = raw.questionImage ?? null;
+
+  // Explanation chung (fallback)
+  const explanation = pickExplanation(raw.explanationGeneralJA, raw.explanationGeneralVI, lang);
+
+  // Build 5 options (1..5)
+  const buildOption = (
+    textJA?: string,
+    textVI?: string,
+    image?: string | null,
+    isAnswer?: boolean,
+    expJA?: string,
+    expVI?: string
+  ): QARenderOption | null => {
+    const t = pickText(textJA, textVI, lang);
+    const e = pickExplanation(expJA, expVI, lang);
+    const img = image ?? null;
+    const ans = !!isAnswer;
+
+    if (!hasOptionContent(t, img)) {
+      // option rỗng → bỏ qua
+      return null;
+    }
+    return {
+      isAnswer: ans,
+      text: t,
+      image: img,
+      explanation: e,
+    };
+  };
+
+  const options: Array<QARenderOption | null> = [
+    buildOption(
+      raw.option1TextJA,
+      raw.option1TextVI,
+      raw.option1Image ?? null,
+      raw.option1IsAnswer,
+      raw.option1ExplanationJA,
+      raw.option1ExplanationVI
+    ),
+    buildOption(
+      raw.option2TextJA,
+      raw.option2TextVI,
+      raw.option2Image ?? null,
+      raw.option2IsAnswer,
+      raw.option2ExplanationJA,
+      raw.option2ExplanationVI
+    ),
+    buildOption(
+      raw.option3TextJA,
+      raw.option3TextVI,
+      raw.option3Image ?? null,
+      raw.option3IsAnswer,
+      raw.option3ExplanationJA,
+      raw.option3ExplanationVI
+    ),
+    buildOption(
+      raw.option4TextJA,
+      raw.option4TextVI,
+      raw.option4Image ?? null,
+      raw.option4IsAnswer,
+      raw.option4ExplanationJA,
+      raw.option4ExplanationVI
+    ),
+    buildOption(
+      raw.option5TextJA,
+      raw.option5TextVI,
+      raw.option5Image ?? null,
+      raw.option5IsAnswer,
+      raw.option5ExplanationJA,
+      raw.option5ExplanationVI
+    ),
+  ];
+
+  const filteredOptions = options.filter(Boolean) as QARenderOption[];
 
   return {
-    id: q.questionId,
-    courseId: q.courseId,
-    subjectId: q.subjectId,
-    examYear: q.examYear,
+    id: raw.questionId,
+    courseId: raw.courseId,
+    subjectId: raw.subjectId,
+    examYear: Number(raw.examYear) || 0,
 
-    difficulty: q.difficulty,
-    sourceNote: q.sourceNote,
-    tags: q.tags,
+    text,
+    image,
+    explanation,
 
-    questionTextJA: q.questionTextJA,
-    questionTextVI: q.questionTextVI,
-    questionImage: q.questionImage,
+    options: filteredOptions,
 
-    options: opts,
-
-    explanationGeneralJA: q.explanationGeneralJA,
-    explanationGeneralVI: q.explanationGeneralVI,
-    explanationImage: q.explanationImage,
-
-    // Pass-through 2 field mới
-    officialPosition: (q as any).officialPosition ?? null,
-    cognitiveLevel: (q as any).cognitiveLevel ?? null,
+    difficulty: (raw.difficulty ?? null) as Difficulty | null,
+    sourceNote: (raw.sourceNote ?? null) as SourceCode | string | null,
+    tags: normalizeTags(raw.tags),
   };
 }
 
-/** Xáo trộn Fisher–Yates, hỗ trợ seed tái lập */
-export function shuffleOptions<T extends QAOption>(arr: T[], seed?: number): T[] {
-  const a = [...arr];
-  const rnd = seedRandom(seed);
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(rnd() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
+/* =============================================================================
+ * SECTION 4. RAW → RENDER (list) + optional shuffle
+ *  - Cho phép filter trước khi format, hoặc sau khi format (tuỳ nhu cầu)
+ *  - Có thể seed để ổn định thứ tự shuffle giữa các lần render
+ * ========================================================================== */
+
+export interface RenderListOptions {
+  shuffle?: boolean;
+  seed?: number | string;
+  /** Filter RAW trước khi format (ví dụ by examYear, subjectId…) */
+  filterRaw?: (q: QuestionSnapshotItem) => boolean;
+  /** Filter RENDER sau khi format (ví dụ bỏ câu ít phương án…) */
+  filterRender?: (q: QARenderItem) => boolean;
 }
 
-/** PRNG đơn giản dựa trên xorshift; fallback Math.random khi không có seed */
-function seedRandom(seed?: number) {
-  if (typeof seed !== "number") return Math.random;
-  let x = seed || 123456789;
-  return () => {
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    return ((x >>> 0) % 1_000_000) / 1_000_000;
-  };
+export function toQARenderList(
+  rawList: QuestionSnapshotItem[],
+  lang: UILang = 'JA',
+  opts: RenderListOptions = {}
+): QARenderItem[] {
+  const {
+    shuffle: doShuffle = false,
+    seed,
+    filterRaw,
+    filterRender,
+  } = opts;
+
+  const filteredRaw = filterRaw ? rawList.filter(filterRaw) : rawList.slice();
+
+  const rendered = filteredRaw.map((r) => toQARenderItemFromSnapshot(r, lang));
+
+  const final = filterRender ? rendered.filter(filterRender) : rendered;
+
+  if (!doShuffle) return final;
+
+  // Shuffle từng item (options), giữ thứ tự câu
+  return final.map((item) => ({
+    ...item,
+    options: shuffleOptions(item.options, seed),
+  }));
+}
+
+/* =============================================================================
+ * SECTION 5. Convenience helpers (optional)
+ *  - Ví dụ: filter theo năm, môn, độ khó… để tái sử dụng ở nhiều trang
+ * ========================================================================== */
+
+export function byExamYear(years: number[] | number) {
+  const set = new Set(Array.isArray(years) ? years : [years]);
+  return (q: QuestionSnapshotItem) => set.has(Number(q.examYear) || 0);
+}
+
+export function bySubject(subjectId: string) {
+  const id = subjectId.trim();
+  return (q: QuestionSnapshotItem) => q.subjectId === id;
+}
+
+export function byDifficulty(ds: Array<Difficulty | null> | Difficulty) {
+  const set = new Set(Array.isArray(ds) ? ds : [ds]);
+  return (q: QuestionSnapshotItem) => set.has((q.difficulty ?? null) as Difficulty | null);
 }

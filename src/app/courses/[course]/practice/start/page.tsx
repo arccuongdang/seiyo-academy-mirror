@@ -1,64 +1,148 @@
 'use client';
 
+/**
+ * =============================================================================
+ *  Practice Start – Khóa {course}, theo môn (?subject=SUBJECT)
+ *  Data flow (Option B):
+ *   RAW (QuestionSnapshotItem[]) → format JA/VI (QARenderItem) → shuffle (cùng hoán vị)
+ * -----------------------------------------------------------------------------
+ *  Tính năng:
+ *   - Chọn số câu, phạm vi năm gần đây, trộn đáp án, lọc theo tag/độ khó (nhẹ)
+ *   - Hiển thị JA là chính; có nút bật/ẩn VI, đồng thời có furigana cho JA
+ *   - Chấm điểm single-choice theo chỉ số phương án đã shuffle
+ * =============================================================================
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
-// Data
-import { loadManifest, pickLatestFile, loadSubjectSnapshot } from '../../../../../lib/qa/excel';
-import { toQARenderItem, shuffleOptions } from '../../../../../lib/qa/formatters';
-import { gradeSingleChoice } from '../../../../../lib/qa/grade';
+// Loaders & formatters (Option B)
+import { loadRawQuestionsFor } from '../../../../../lib/qa/excel';
+import {
+  toQARenderItemFromSnapshot,
+} from '../../../../../lib/qa/formatters';
 import { toFuriganaHtml } from '../../../../../lib/jp/kuroshiro';
 
 // Types
-import type { QARenderItem, QAOption, CognitiveLevel } from '../../../../../lib/qa/schema';
+import type {
+  QuestionSnapshotItem,
+  QARenderItem,
+  QARenderOption,
+} from '../../../../../lib/qa/schema';
 
-// View model cho 1 câu hỏi trên UI
-type ViewQuestion = QARenderItem & {
-  shuffled: QAOption[];
-  selectedId?: string | null;
-  submitted?: boolean;
+/* =============================================================================
+ * SECTION A. Utilities (shuffle + grading + small helpers)
+ * ========================================================================== */
+
+/** Sinh hoán vị ngẫu nhiên 0..n-1 */
+function shuffledIndices(n: number): number[] {
+  const idx = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [idx[i], idx[j]] = [idx[j], idx[i]];
+  }
+  return idx;
+}
+
+/** Lấy ngẫu nhiên tối đa N phần tử từ mảng (không lặp) */
+function sampleN<T>(arr: T[], n: number): T[] {
+  if (n >= arr.length) return [...arr];
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a.slice(0, n);
+}
+
+/** Chấm single-choice theo chỉ số đã chọn (sau shuffle) */
+function gradeSingleChoiceByIndex(selectedIndex: number | null, options: QARenderOption[]) {
+  const correctIndexes = options
+    .map((o, i) => (o.isAnswer ? i : -1))
+    .filter((i) => i >= 0);
+  const multiCorrect = correctIndexes.length > 1;
+  const isCorrect = selectedIndex != null ? correctIndexes.includes(selectedIndex) : false;
+  return { isCorrect, correctIndexes, multiCorrect };
+}
+
+/** Normalize tags (string | string[]) → string[] */
+function tagsToArray(tags: string | string[] | null | undefined): string[] {
+  if (!tags) return [];
+  if (Array.isArray(tags)) return tags.map(String).filter(Boolean);
+  return String(tags)
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/* =============================================================================
+ * SECTION B. View model types
+ *  - Ta giữ cùng lúc cả JA và VI đã format để phục vụ toggle JA/VI
+ *  - Shuffle dựa trên hoán vị index áp dụng đồng thời cho JA & VI
+ * ========================================================================== */
+
+type ViewQuestion = {
+  id: string;
+  examYear: number;
+  courseId: string;
+  subjectId: string;
+
+  // Rendered content for JA/VI
+  ja: QARenderItem;
+  vi: QARenderItem;
+
+  // Shuffled order for options
+  order: number[]; // permutation over options indexes
+
+  // Interaction state
+  selectedIndex: number | null; // index in the shuffled order
+  submitted: boolean;
   isCorrect?: boolean;
-  correctIds?: string[];
+  correctShuffledIndexes?: number[];
   multiCorrect?: boolean;
 
-  // Toggle JA/VI
-  showVIQuestion?: boolean;
-  showVIOption?: Record<string, boolean>;
-  showJAQuestion?: boolean;
-  showJAOption?: Record<string, boolean>;
+  // Toggles
+  showVIQuestion: boolean;
+  showVIOption: Record<number, boolean>;
+  showJAQuestion: boolean;
+  showJAOption: Record<number, boolean>;
 
-  // Cache furigana
+  // Furigana cache (JA only)
   furiQuestionHtml?: string;
-  furiOptionHtml?: Record<string, string>;
+  furiOptionHtml?: Record<number, string>;
 };
 
-// --- Setup form model ---
+/* =============================================================================
+ * SECTION C. Component
+ * ========================================================================== */
+
 type YearWindow = 5 | 10 | 15;
-type DifficultyValue = string; // repo bạn đang lưu difficulty dạng string/number → để string cho linh hoạt
+type DifficultyValue = string;
 
 export default function PracticeStart({ params }: { params: { course: string } }) {
   const { course } = params;
   const search = useSearchParams();
   const subject = search.get('subject') || '';
+  const yearParam = search.get('year');
 
-  const [allItems, setAllItems] = useState<QARenderItem[]>([]);
+  // ---- Data state -----------------------------------------------------------
+  const [rawItems, setRawItems] = useState<QuestionSnapshotItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // ========= SETUP FORM =========
+  // ---- Setup form state -----------------------------------------------------
   const [started, setStarted] = useState(false);
-
   const [numQuestions, setNumQuestions] = useState<5 | 10 | 15 | 20 | 25>(5);
   const [yearWindow, setYearWindow] = useState<YearWindow>(5);
-  const [randomizeOptions, setRandomizeOptions] = useState(false); // default: giữ nguyên → false
-  const [tagSelections, setTagSelections] = useState<Set<string>>(new Set()); // rỗng = không lọc
+  const [randomizeOptions, setRandomizeOptions] = useState(false);
+  const [tagSelections, setTagSelections] = useState<Set<string>>(new Set());
   const [difficultySel, setDifficultySel] = useState<DifficultyValue | 'RANDOM'>('RANDOM');
 
-  // ========= QUESTIONS SAU KHI APPLY SETUP =========
+  // ---- Working set ----------------------------------------------------------
   const [questions, setQuestions] = useState<ViewQuestion[]>([]);
   const [index, setIndex] = useState(0);
 
-  // ====== Load toàn bộ câu (theo subject) ======
+  // ====== Load RAW theo subject ======
   useEffect(() => {
     if (!subject) return;
     setLoading(true);
@@ -66,17 +150,8 @@ export default function PracticeStart({ params }: { params: { course: string } }
 
     (async () => {
       try {
-        const manifest = await loadManifest();
-        const filename = pickLatestFile(manifest, course, subject);
-        if (!filename) {
-          setErr(`Không tìm thấy snapshot cho ${course}/${subject}. Hãy publish dữ liệu ở /admin/data.`);
-          setLoading(false);
-          return;
-        }
-
-        const snapshot = await loadSubjectSnapshot(course, subject, filename);
-        const items = snapshot.items.map(toQARenderItem);
-        setAllItems(items);
+        const raws = await loadRawQuestionsFor(course, subject); // tự pick latest
+        setRawItems(raws);
         setLoading(false);
       } catch (e: any) {
         setErr(e?.message || 'Lỗi tải dữ liệu');
@@ -85,92 +160,95 @@ export default function PracticeStart({ params }: { params: { course: string } }
     })();
   }, [course, subject]);
 
-  // ====== Derive meta: years, tags, difficulties ======
+  // ====== Derive meta từ RAW ======
   const maxYear = useMemo(() => {
-    const ys = allItems.map((q) => q.examYear || 0).filter(Boolean);
+    const ys = rawItems.map((q) => Number(q.examYear) || 0).filter(Boolean);
     return ys.length ? Math.max(...ys) : null;
-  }, [allItems]);
+  }, [rawItems]);
 
   const tagList = useMemo(() => {
     const set = new Set<string>();
-    for (const q of allItems) {
-      const raw = (q as any).tags;
-      let arr: string[] = [];
-      if (Array.isArray(raw)) {
-        arr = raw.map(String).filter(Boolean);
-      } else if (typeof raw === 'string') {
-        // hỗ trợ "a,b,c" hoặc "a b c"
-        arr = raw.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
-      }
-      for (const t of arr) set.add(t);
+    for (const q of rawItems) {
+      for (const t of tagsToArray(q.tags as any)) set.add(t);
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [allItems]);
-
-
+  }, [rawItems]);
 
   const difficultyList = useMemo(() => {
     const set = new Set<string>();
-    for (const q of allItems) {
+    for (const q of rawItems) {
       if (q.difficulty != null && String(q.difficulty).trim() !== '') {
         set.add(String(q.difficulty));
       }
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [allItems]);
+  }, [rawItems]);
 
-  // ====== Áp dụng bộ lọc & chọn N câu khi bấm "Bắt đầu" ======
+  // ====== Apply setup & build view ======
   const applySetup = () => {
-    if (!allItems.length) return;
+    if (!rawItems.length) return;
 
-    let pool = [...allItems];
+    let pool = [...rawItems];
 
-    // 1) Lọc theo phạm vi năm (tính theo năm lớn nhất trong pool)
-    if (maxYear && yearWindow) {
+    // 1) Năm (nếu có ?year=YYYY trong URL → ưu tiên)
+    if (yearParam) {
+      const y = parseInt(yearParam, 10);
+      if (!Number.isNaN(y)) pool = pool.filter((q) => Number(q.examYear) === y);
+    } else if (maxYear && yearWindow) {
+      // Nếu không có year param → dùng cửa sổ năm gần đây
       const minYear = maxYear - (yearWindow - 1);
-      pool = pool.filter((q) => (q.examYear || 0) >= minYear);
+      pool = pool.filter((q) => Number(q.examYear) >= minYear);
     }
 
-    // 2) Lọc theo tags (nếu có chọn)
+    // 2) Tag filter
     if (tagSelections.size > 0) {
       pool = pool.filter((q) => {
-        const raw = (q as any).tags;
-        let arr: string[] = [];
-        if (Array.isArray(raw)) {
-          arr = raw.map(String).filter(Boolean);
-        } else if (typeof raw === 'string') {
-          arr = raw.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
-        }
-        const tags = new Set(arr);
+        const tags = new Set(tagsToArray(q.tags as any));
         for (const t of tagSelections) {
-          if (tags.has(t)) return true; // chấp nhận nếu có ít nhất 1 tag khớp
+          if (tags.has(t)) return true;
         }
         return false;
       });
     }
 
-
-    // 3) Lọc theo độ khó (nếu khác RANDOM)
+    // 3) Độ khó
     if (difficultySel !== 'RANDOM') {
       pool = pool.filter((q) => String(q.difficulty) === String(difficultySel));
     }
 
-    // 4) Chọn N câu (random để đỡ lặp)
-    //    Nếu pool ít hơn N, lấy hết.
-    const chosen = sampleN(pool, numQuestions);
+    // 4) Chọn N câu
+    const chosenRaw = sampleN(pool, numQuestions);
 
-    // 5) Chuẩn bị ViewQuestion + shuffle option nếu bật randomizeOptions
-    const view: ViewQuestion[] = chosen.map((q) => ({
-      ...q,
-      shuffled: randomizeOptions ? shuffleOptions(q.options) : [...q.options],
-      selectedId: null,
-      submitted: false,
-      showVIQuestion: false,
-      showVIOption: {},
-      showJAQuestion: false,
-      showJAOption: {},
-      furiOptionHtml: {},
-    }));
+    // 5) Format JA/VI & build ViewQuestion
+    const view: ViewQuestion[] = chosenRaw.map((raw) => {
+      const ja = toQARenderItemFromSnapshot(raw, 'JA');
+      const vi = toQARenderItemFromSnapshot(raw, 'VI');
+
+      // Hoán vị (áp dụng đồng thời cho JA/VI)
+      const order = randomizeOptions ? shuffledIndices(ja.options.length) : Array.from({ length: ja.options.length }, (_, i) => i);
+
+      return {
+        id: ja.id,
+        examYear: ja.examYear,
+        courseId: ja.courseId,
+        subjectId: ja.subjectId,
+
+        ja,
+        vi,
+
+        order,
+
+        selectedIndex: null,
+        submitted: false,
+
+        showVIQuestion: false,
+        showVIOption: {},
+        showJAQuestion: false,
+        showJAOption: {},
+
+        furiOptionHtml: {},
+      };
+    });
 
     setQuestions(view);
     setIndex(0);
@@ -178,7 +256,7 @@ export default function PracticeStart({ params }: { params: { course: string } }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // ========= Handlers trong khi làm =========
+  // ====== Handlers ======
   const goto = (i: number) => {
     setIndex((prev) => {
       const next = Math.min(Math.max(i, 0), questions.length - 1);
@@ -186,9 +264,9 @@ export default function PracticeStart({ params }: { params: { course: string } }
     });
   };
 
-  const onSelect = (qIdx: number, optionId: string) => {
+  const onSelect = (qIdx: number, shuffledIndex: number) => {
     setQuestions((prev) =>
-      prev.map((q, i) => (i === qIdx ? { ...q, selectedId: optionId } : q)),
+      prev.map((q, i) => (i === qIdx ? { ...q, selectedIndex: shuffledIndex } : q)),
     );
   };
 
@@ -196,12 +274,16 @@ export default function PracticeStart({ params }: { params: { course: string } }
     setQuestions((prev) =>
       prev.map((q, i) => {
         if (i !== qIdx || q.submitted) return q;
-        const res = gradeSingleChoice(q.selectedId ?? null, q.shuffled);
+
+        // Chấm theo JA (JA/VI đồng bộ đúng/sai)
+        const optsInOrder = q.order.map((k) => q.ja.options[k]);
+        const res = gradeSingleChoiceByIndex(q.selectedIndex, optsInOrder);
+
         return {
           ...q,
           submitted: true,
           isCorrect: res.isCorrect,
-          correctIds: res.correctIds,
+          correctShuffledIndexes: res.correctIndexes,
           multiCorrect: res.multiCorrect,
         };
       }),
@@ -220,11 +302,11 @@ export default function PracticeStart({ params }: { params: { course: string } }
     );
 
     const cur = questions[qIdx];
-    const need = !cur?.furiQuestionHtml && (cur?.questionTextJA || '').trim().length > 0;
+    const need = !cur?.furiQuestionHtml && (cur?.ja.text || '').trim().length > 0;
     if (!need) return;
 
     (async () => {
-      const html = await toFuriganaHtml(cur!.questionTextJA || '');
+      const html = await toFuriganaHtml(cur!.ja.text || '');
       setQuestions((prev) => {
         const next = [...prev];
         if (!next[qIdx]) return prev;
@@ -234,29 +316,29 @@ export default function PracticeStart({ params }: { params: { course: string } }
     })();
   };
 
-  // Toggle VI/JA Option
-  const toggleVIOption = (qIdx: number, optionId: string) => {
+  // Toggle VI/JA Option (theo chỉ số sau shuffle)
+  const toggleVIOption = (qIdx: number, shuffledIndex: number) => {
     setQuestions((prev) =>
       prev.map((q, i) => {
         if (i !== qIdx) return q;
         const m = { ...(q.showVIOption || {}) };
-        m[optionId] = !m[optionId];
+        m[shuffledIndex] = !m[shuffledIndex];
         return { ...q, showVIOption: m };
       }),
     );
   };
-  const toggleJAOption = (qIdx: number, optionId: string, textJA: string) => {
+  const toggleJAOption = (qIdx: number, shuffledIndex: number, textJA: string) => {
     setQuestions((prev) =>
       prev.map((q, i) => {
         if (i !== qIdx) return q;
         const m = { ...(q.showJAOption || {}) };
-        m[optionId] = !m[optionId];
+        m[shuffledIndex] = !m[shuffledIndex];
         return { ...q, showJAOption: m };
       }),
     );
 
     const cur = questions[qIdx];
-    const has = cur?.furiOptionHtml?.[optionId];
+    const has = cur?.furiOptionHtml?.[shuffledIndex];
     const need = !has && (textJA || '').trim().length > 0;
     if (!need) return;
 
@@ -266,7 +348,7 @@ export default function PracticeStart({ params }: { params: { course: string } }
         const next = [...prev];
         if (!next[qIdx]) return prev;
         const map = { ...(next[qIdx].furiOptionHtml || {}) };
-        map[optionId] = html;
+        map[shuffledIndex] = html;
         next[qIdx] = { ...next[qIdx], furiOptionHtml: map };
         return next;
       });
@@ -283,12 +365,13 @@ export default function PracticeStart({ params }: { params: { course: string } }
   }
   if (loading) return <main style={{ padding: 24 }}>Đang tải dữ liệu…</main>;
   if (err) return <main style={{ padding: 24, color: 'crimson' }}>Lỗi: {err}</main>;
-  if (!allItems.length) return <main style={{ padding: 24 }}>Chưa có câu hỏi cho môn {subject}.</main>;
+  if (!rawItems.length) return <main style={{ padding: 24 }}>Chưa có câu hỏi cho môn {subject}.</main>;
 
   // =======================
-  // 1) MÀN HÌNH CHỌN THAM SỐ
+  // 1) MÀN HÌNH THIẾT LẬP
   // =======================
   if (!started) {
+    const latestYearText = maxYear ? `(tối đa: ${maxYear})` : '';
     return (
       <main style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
         <h1 style={{ fontSize: 20, fontWeight: 800, marginBottom: 12 }}>
@@ -309,22 +392,24 @@ export default function PracticeStart({ params }: { params: { course: string } }
             </div>
           </div>
 
-          {/* 2) Phạm vi năm gần đây */}
-          <div>
-            <div style={{ fontWeight: 700, marginBottom: 6 }}>
-              2) Phạm vi năm gần đây {maxYear ? `(tối đa: ${maxYear})` : ''}
+          {/* 2) Phạm vi năm gần đây (bỏ qua nếu có ?year=YYYY) */}
+          {!yearParam && (
+            <div>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                2) Phạm vi năm gần đây {latestYearText}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {[5, 10, 15].map((y) => (
+                  <label key={y} style={{ display: 'flex', gap: 6, alignItems: 'center', border: '1px solid #e5e7eb', borderRadius: 8, padding: '6px 10px' }}>
+                    <input type="radio" name="yw" checked={yearWindow === y} onChange={() => setYearWindow(y as YearWindow)} />
+                    {y} năm
+                  </label>
+                ))}
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {[5, 10, 15].map((y) => (
-                <label key={y} style={{ display: 'flex', gap: 6, alignItems: 'center', border: '1px solid #e5e7eb', borderRadius: 8, padding: '6px 10px' }}>
-                  <input type="radio" name="yw" checked={yearWindow === y} onChange={() => setYearWindow(y as YearWindow)} />
-                  {y} năm
-                </label>
-              ))}
-            </div>
-          </div>
+          )}
 
-          {/* 3) Random đáp án */}
+          {/* 3) Trộn đáp án */}
           <div>
             <div style={{ fontWeight: 700, marginBottom: 6 }}>3) Trộn thứ tự đáp án</div>
             <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
@@ -418,7 +503,9 @@ export default function PracticeStart({ params }: { params: { course: string } }
   // 2) MÀN HÌNH LÀM BÀI
   // =======================
   const q = questions[index];
-  const selected = q.selectedId || null;
+  const jaOpts = q.order.map((k) => q.ja.options[k]);
+  const viOpts = q.order.map((k) => q.vi.options[k]); // đảm bảo cùng thứ tự với JA
+  const selected = q.selectedIndex;
 
   return (
     <main style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
@@ -452,23 +539,11 @@ export default function PracticeStart({ params }: { params: { course: string } }
         {/* Header + badge */}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
           <div style={{ fontWeight: 600 }}>
-            問 {index + 1}: {q.questionTextJA || q.questionTextVI || '(No content)'}
+            問 {index + 1}: {q.ja.text || q.vi.text || '(No content)'}
           </div>
 
-          {/* Badge vị trí chính thức (nếu có) */}
-          {typeof q.officialPosition === 'number' && (
-            <span style={{ border: '1px solid #e5e7eb', borderRadius: 999, padding: '2px 8px', fontSize: 12 }}>
-              位置 {q.officialPosition}
-            </span>
-          )}
-          {/* Badge cognitive level (nếu có) */}
-          {q.cognitiveLevel && (
-            <span style={{ border: '1px solid #e5e7eb', borderRadius: 999, padding: '2px 8px', fontSize: 12 }}>
-              {q.cognitiveLevel}
-            </span>
-          )}
-
-          {(q.questionTextVI || '').trim() && (
+        {/* Toggle JA/VI cho câu */}
+          {(q.vi.text || '').trim() && (
             <button
               onClick={() => toggleVIQuestion(index)}
               aria-pressed={!!q.showVIQuestion}
@@ -477,7 +552,7 @@ export default function PracticeStart({ params }: { params: { course: string } }
               VI
             </button>
           )}
-          {(q.questionTextJA || '').trim() && (
+          {(q.ja.text || '').trim() && (
             <button
               onClick={() => toggleJAQuestion(index)}
               aria-pressed={!!q.showJAQuestion}
@@ -488,10 +563,10 @@ export default function PracticeStart({ params }: { params: { course: string } }
           )}
         </div>
 
-        {/* Ảnh câu hỏi */}
-        {q.questionImage && (
+        {/* Ảnh câu hỏi (nếu có) */}
+        {q.ja.image && (
           <img
-            src={`/images/${q.courseId}/${q.subjectId}/${q.examYear}/${q.questionImage}`}
+            src={q.ja.image}
             alt=""
             style={{ maxWidth: '100%', marginBottom: 8 }}
           />
@@ -504,29 +579,31 @@ export default function PracticeStart({ params }: { params: { course: string } }
             dangerouslySetInnerHTML={{ __html: q.furiQuestionHtml }}
           />
         )}
-        {q.showVIQuestion && (q.questionTextVI || '').trim() && (
+        {q.showVIQuestion && (q.vi.text || '').trim() && (
           <div style={{ background: '#fffbeb', padding: 8, borderRadius: 8, marginBottom: 8 }}>
-            {q.questionTextVI}
+            {q.vi.text}
           </div>
         )}
 
-        {/* Danh sách đáp án */}
+        {/* Danh sách đáp án (theo JA, đồng bộ VI qua index) */}
         <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-          {q.shuffled.map((opt) => {
-            const selectedThis = selected === opt.id;
-            const hasVI = (opt.textVI || '').trim().length > 0;
-            const hasJA = (opt.textJA || '').trim().length > 0;
-            const showVI = !!q.showVIOption?.[opt.id];
-            const showJA = !!q.showJAOption?.[opt.id];
-            const furiHtml = q.furiOptionHtml?.[opt.id];
+          {jaOpts.map((opt, i) => {
+            const selectedThis = selected === i;
+
+            const hasVI = !!(viOpts[i]?.text && viOpts[i].text!.trim().length > 0);
+            const hasJA = !!(opt?.text && opt.text!.trim().length > 0);
+
+            const showVI = !!q.showVIOption?.[i];
+            const showJA = !!q.showJAOption?.[i];
+            const furiHtml = q.furiOptionHtml?.[i];
 
             const showResult = !!q.submitted;
-            const isCorrectChoice = !!q.correctIds && q.correctIds.includes(opt.id);
+            const isCorrectChoice = !!q.correctShuffledIndexes && q.correctShuffledIndexes.includes(i);
             const isWrongPicked = showResult && selectedThis && !isCorrectChoice;
 
             return (
               <li
-                key={opt.id}
+                key={i}
                 style={{
                   border: '1px solid #f0f0f0',
                   borderRadius: 8,
@@ -540,12 +617,12 @@ export default function PracticeStart({ params }: { params: { course: string } }
                     type="radio"
                     name={`q-${q.id}`}
                     checked={selectedThis}
-                    onChange={() => onSelect(index, opt.id)}
+                    onChange={() => onSelect(index, i)}
                     disabled={q.submitted}
                     style={{ marginTop: 4 }}
                   />
                   <div style={{ flex: 1 }}>
-                    <div>{opt.textJA || opt.textVI || '(Không có nội dung)'}</div>
+                    <div>{opt.text || viOpts[i]?.text || '(Không có nội dung)'}</div>
 
                     {/* Furigana JA cho option */}
                     {showJA && furiHtml && (
@@ -558,7 +635,7 @@ export default function PracticeStart({ params }: { params: { course: string } }
                     {/* Bản dịch VI cho option */}
                     {showVI && hasVI && (
                       <div style={{ background: '#fffbeb', padding: 6, borderRadius: 6, marginTop: 6 }}>
-                        {opt.textVI}
+                        {viOpts[i]?.text}
                       </div>
                     )}
 
@@ -566,8 +643,8 @@ export default function PracticeStart({ params }: { params: { course: string } }
                     <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
                       {hasVI && (
                         <button
-                          onClick={() => toggleVIOption(index, opt.id)}
-                          aria-pressed={!!q.showVIOption?.[opt.id]}
+                          onClick={() => toggleVIOption(index, i)}
+                          aria-pressed={!!q.showVIOption?.[i]}
                           style={{ padding: '2px 6px', border: '1px solid #ddd', borderRadius: 6, fontSize: 12 }}
                           disabled={q.submitted}
                         >
@@ -576,8 +653,8 @@ export default function PracticeStart({ params }: { params: { course: string } }
                       )}
                       {hasJA && (
                         <button
-                          onClick={() => toggleJAOption(index, opt.id, opt.textJA || '')}
-                          aria-pressed={!!q.showJAOption?.[opt.id]}
+                          onClick={() => toggleJAOption(index, i, opt.text || '')}
+                          aria-pressed={!!q.showJAOption?.[i]}
                           style={{ padding: '2px 6px', border: '1px solid #ddd', borderRadius: 6, fontSize: 12 }}
                           disabled={q.submitted}
                         >
@@ -597,10 +674,10 @@ export default function PracticeStart({ params }: { params: { course: string } }
           <div style={{ marginTop: 12 }}>
             <button
               onClick={() => submitOne(index)}
-              disabled={!q.selectedId}
+              disabled={q.selectedIndex == null}
               style={{
                 padding: '8px 12px', borderRadius: 8, border: '1px solid #175cd3',
-                background: q.selectedId ? '#175cd3' : '#94a3b8', color: '#fff', fontWeight: 700
+                background: q.selectedIndex != null ? '#175cd3' : '#94a3b8', color: '#fff', fontWeight: 700
               }}
             >
               解答を提出 / Nộp câu
@@ -610,15 +687,4 @@ export default function PracticeStart({ params }: { params: { course: string } }
       </div>
     </main>
   );
-}
-
-/** Lấy ngẫu nhiên tối đa N phần tử từ mảng (không lặp) */
-function sampleN<T>(arr: T[], n: number): T[] {
-  if (n >= arr.length) return [...arr];
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a.slice(0, n);
 }

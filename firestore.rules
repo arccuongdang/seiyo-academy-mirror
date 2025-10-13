@@ -1,27 +1,70 @@
+// firestore.rules
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Hồ sơ người dùng
-    match /users/{userId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow write: if request.auth != null && request.auth.uid == userId;
+    // Chặn tất cả mặc định
+    match /{document=**} {
+      allow read, write: if false;
     }
 
-    // Attempts (kết quả thi)
-    match /attempts/{attemptId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null; // có thể siết: userId == request.auth.uid
-      match /items/{itemId} {
-        allow read: if request.auth != null;
-        allow write: if request.auth != null;
-      }
+    // Cho phép đọc/ghi chỉ với tài khoản đăng nhập
+    function isSignedIn() {
+      return request.auth != null && request.auth.uid != null;
     }
 
-    // Bộ sưu tập câu sai theo người dùng
-    match /users/{userId}/wrongs/{qid} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow write: if request.auth != null && request.auth.uid == userId;
+    // Kiểm tra tài liệu thuộc về chính chủ
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Validate payload attempt
+    function validAttemptData() {
+      return request.resource.data.userId == request.auth.uid
+        && request.resource.data.questionId is string
+        && request.resource.data.courseId is string
+        && request.resource.data.subjectId is string
+        && (request.resource.data.selectedIndex == null
+            || request.resource.data.selectedIndex is int)
+        && request.resource.data.isCorrect is bool
+        // optional fields:
+        && (request.resource.data.examYear == null || request.resource.data.examYear is int)
+        && (request.resource.data.difficulty == null || request.resource.data.difficulty is string)
+        && (request.resource.data.sourceNote == null || request.resource.data.sourceNote is string)
+        && (request.resource.data.tags == null
+            || request.resource.data.tags is string
+            || request.resource.data.tags is list)
+        && (request.resource.data.sessionId == null || request.resource.data.sessionId is string)
+        ;
+    }
+
+    // Validate payload session summary
+    function validAttemptSession() {
+      return request.resource.data.userId == request.auth.uid
+        && request.resource.data.courseId is string
+        && request.resource.data.subjectId is string
+        && request.resource.data.sessionId is string
+        && request.resource.data.total is int
+        && request.resource.data.correct is int
+        && request.resource.data.blank is int
+        && request.resource.data.scorePercent is int
+        && (request.resource.data.year == null || request.resource.data.year is int)
+        ;
+    }
+
+    // Structure: /users/{uid}/attempts/{autoId}
+    match /users/{uid}/attempts/{attemptId} {
+      allow create: if isOwner(uid) && validAttemptData();
+      allow read:   if isOwner(uid);
+      // Không cho update/delete (tuỳ bạn):
+      allow update, delete: if false;
+    }
+
+    // Structure: /users/{uid}/attemptSessions/{sessionId}
+    match /users/{uid}/attemptSessions/{sessionId} {
+      allow create, update: if isOwner(uid) && validAttemptSession();
+      allow read:           if isOwner(uid);
+      allow delete:         if false;
     }
   }
 }

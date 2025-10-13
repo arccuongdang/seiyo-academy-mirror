@@ -1,16 +1,30 @@
 {
-  "KTS2": {
-    "TK": [
-      "TK-questions.v1760310123083.json"
-    ],
-    "L": [
-      "L-questions.v1760310123083.json"
-    ],
-    "KC": [
-      "KC-questions.v1760310123083.json"
-    ],
-    "TC": [
-      "TC-questions.v1760310123083.json"
-    ]
-  }
+  "version": 1760310123083,
+  "generatedAt": "2025-10-13T00:00:00.000Z",
+  "files": [
+    {
+      "path": "KTS2/TK-questions.v1760310123083.json",
+      "courseId": "KTS2",
+      "subjectId": "TK",
+      "version": 1760310123083
+    },
+    {
+      "path": "KTS2/L-questions.v1760310123083.json",
+      "courseId": "KTS2",
+      "subjectId": "L",
+      "version": 1760310123083
+    },
+    {
+      "path": "KTS2/KC-questions.v1760310123083.json",
+      "courseId": "KTS2",
+      "subjectId": "KC",
+      "version": 1760310123083
+    },
+    {
+      "path": "KTS2/TC-questions.v1760310123083.json",
+      "courseId": "KTS2",
+      "subjectId": "TC",
+      "version": 1760310123083
+    }
+  ]
 }

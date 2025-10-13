@@ -1,0 +1,9 @@
+{
+  "version": 1760310123083,
+  "items": [
+    { "courseId": "KTS2", "subjectId": "TK", "nameJA": "計画", "nameVI": "Thiết kế" },
+    { "courseId": "KTS2", "subjectId": "L",  "nameJA": "法規", "nameVI": "Pháp quy" },
+    { "courseId": "KTS2", "subjectId": "KC", "nameJA": "構造", "nameVI": "Kết cấu" },
+    { "courseId": "KTS2", "subjectId": "TC", "nameJA": "施工", "nameVI": "Thi công" }
+  ]
+}

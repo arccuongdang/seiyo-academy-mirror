@@ -1,92 +1,134 @@
 // src/lib/analytics/attempts.ts
-import { db, requireUser, serverTimestamp, collection, doc, writeBatch, setDoc } from '../firebase/client';
-import { increment } from 'firebase/firestore';
+/**
+ * ============================================================================
+ *  Analytics – Batch attempts writer
+ *  - Sửa import: lấy db/requireUser/serverTimestamp từ ../firebase/client
+ *    và lấy Firestore helpers trực tiếp từ 'firebase/firestore'
+ *  - Ghi batch từng câu hỏi vào /users/{uid}/attempts/{autoId}
+ *  - (Tuỳ chọn) ghi summary phiên làm bài /users/{uid}/attemptSessions/{sessionId}
+ * ============================================================================
+ */
+
+import { db, requireUser, serverTimestamp } from '../firebase/client';
+import {
+  collection,
+  doc,
+  writeBatch,
+  setDoc,
+  increment,
+  type WriteBatch,
+} from 'firebase/firestore';
 
 export type AttemptMode = 'subject' | 'year';
-export type AttemptItemInput = {
-  questionId: string;
-  selectedId: string | null;
-  correctIds: string[];
-  isCorrect: boolean;
-  multiCorrect?: boolean;
-  timeTakenMs?: number;
-};
-export type AttemptMetaInput = {
-  mode: AttemptMode;
+
+export type AttemptItem = {
   courseId: string;
   subjectId: string;
+  questionId: string;
+  selectedIndex: number | null; // index trên mảng options sau shuffle
+  isCorrect: boolean;
   examYear?: number;
+  difficulty?: string | null;
+  tags?: string[] | string | null;
+  sourceNote?: string | null;
+};
+
+export type AttemptSessionSummary = {
   total: number;
   correct: number;
   blank: number;
-  durationSec?: number;
-  device?: 'mobile' | 'desktop' | 'tablet';
-  seed?: number;
+  scorePercent: number; // 0..100
 };
 
-export async function createAttempt(meta: AttemptMetaInput, items: AttemptItemInput[]) {
+/* =============================================================================
+ * Save a batch of attempts (+ optional session summary)
+ * ========================================================================== */
+
+/**
+ * Lưu nhiều attempt cùng lúc.
+ * - Mỗi attempt → /users/{uid}/attempts/{autoId}
+ * - Nếu truyền `sessionId` + `summary` → ghi /users/{uid}/attemptSessions/{sessionId}
+ */
+export async function saveAttemptsBatch(
+  mode: AttemptMode,
+  items: AttemptItem[],
+  opts?: {
+    sessionId?: string;
+    summary?: AttemptSessionSummary;
+  }
+): Promise<void> {
   const user = await requireUser();
-  const uid = user.uid;
+  if (!items?.length) return;
 
-  const batch = writeBatch(db);
+  const batch: WriteBatch = writeBatch(db);
 
-  const attemptsCol = collection(db, 'attempts');
-  const attemptRef = doc(attemptsCol);
-  const attemptId = attemptRef.id;
-
-  batch.set(attemptRef, {
-    userId: uid, ...meta,
-    createdAt: serverTimestamp(),
-    completedAt: serverTimestamp(),
-  });
-
-  const itemsCol = collection(attemptRef, 'items');
+  // 1) Ghi từng attempt
+  const attemptsCol = collection(db, 'users', user.uid, 'attempts');
   for (const it of items) {
-    batch.set(doc(itemsCol, it.questionId), { ...it, createdAt: serverTimestamp() });
-    if (!it.isCorrect) {
-      const wrongRef = doc(db, 'users', uid, 'wrongs', it.questionId);
-      batch.set(wrongRef, {
-        courseId: meta.courseId,
-        subjectId: meta.subjectId,
-        examYear: meta.examYear ?? null,
-        lastSelectedId: it.selectedId,
-        lastAt: serverTimestamp(),
-        count: increment(1),
-      }, { merge: true });
-    }
+    // tạo doc ref auto-id cho batch.set
+    const attemptRef = doc(attemptsCol);
+    batch.set(attemptRef, {
+      userId: user.uid,
+      courseId: it.courseId,
+      subjectId: it.subjectId,
+      questionId: it.questionId,
+      selectedIndex: it.selectedIndex,
+      isCorrect: it.isCorrect,
+      examYear: it.examYear ?? null,
+      difficulty: it.difficulty ?? null,
+      tags: it.tags ?? null,
+      sourceNote: it.sourceNote ?? null,
+      mode,
+      createdAt: serverTimestamp(),
+    });
+  }
+
+  // 2) (Optional) Ghi summary theo phiên
+  if (opts?.sessionId && opts?.summary) {
+    const sessRef = doc(db, 'users', user.uid, 'attemptSessions', opts.sessionId);
+    batch.set(sessRef, {
+      userId: user.uid,
+      courseId: items[0].courseId,
+      subjectId: items[0].subjectId,
+      sessionId: opts.sessionId,
+      year: inferYearFromItems(items),
+      total: opts.summary.total,
+      correct: opts.summary.correct,
+      blank: opts.summary.blank,
+      scorePercent: opts.summary.scorePercent,
+      createdAt: serverTimestamp(),
+      mode,
+    }, { merge: true });
+  }
+
+  // 3) (Optional) Ví dụ tăng counters tổng hợp (tuỳ bạn xài hay bỏ)
+  //    /users/{uid}/stats/{courseId_subjectId}
+  try {
+    const cid = items[0].courseId;
+    const sid = items[0].subjectId;
+    const statRef = doc(db, 'users', user.uid, 'stats', `${cid}_${sid}`);
+    batch.set(statRef, {
+      userId: user.uid,
+      courseId: cid,
+      subjectId: sid,
+      attempts: increment(items.length),
+      correct: increment(items.filter((x) => x.isCorrect).length),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  } catch {
+    // không bắt buộc; có thể bỏ block này nếu không cần thống kê
   }
 
   await batch.commit();
-  return { attemptId };
 }
 
-export async function appendSingleItemSubject(
-  attemptId: string,
-  meta: Omit<AttemptMetaInput, 'total' | 'correct' | 'blank'>,
-  entry: AttemptItemInput
-) {
-  const user = await requireUser();
-  const uid = user.uid;
-  const attemptRef = doc(db, 'attempts', attemptId);
-  const itemsCol = collection(attemptRef, 'items');
+/* =============================================================================
+ * Helpers
+ * ========================================================================== */
 
-  await setDoc(
-    attemptRef,
-    { userId: uid, ...meta, createdAt: serverTimestamp(), updatedAt: serverTimestamp() },
-    { merge: true }
-  );
-
-  await setDoc(doc(itemsCol, entry.questionId), { ...entry, createdAt: serverTimestamp() }, { merge: true });
-
-  if (!entry.isCorrect) {
-    const wrongRef = doc(db, 'users', uid, 'wrongs', entry.questionId);
-    await setDoc(wrongRef, {
-      courseId: meta.courseId,
-      subjectId: meta.subjectId,
-      examYear: meta.examYear ?? null,
-      lastSelectedId: entry.selectedId,
-      lastAt: serverTimestamp(),
-      count: increment(1),
-    }, { merge: true });
+function inferYearFromItems(items: AttemptItem[]): number | null {
+  for (const it of items) {
+    if (typeof it.examYear === 'number') return it.examYear;
   }
+  return null;
 }
