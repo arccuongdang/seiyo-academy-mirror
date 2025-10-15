@@ -1,11 +1,18 @@
 // src/lib/analytics/attempts.ts
 /**
  * ============================================================================
- *  Analytics – Batch attempts writer
- *  - Sửa import: lấy db/requireUser/serverTimestamp từ ../firebase/client
- *    và lấy Firestore helpers trực tiếp từ 'firebase/firestore'
- *  - Ghi batch từng câu hỏi vào /users/{uid}/attempts/{autoId}
- *  - (Tuỳ chọn) ghi summary phiên làm bài /users/{uid}/attemptSessions/{sessionId}
+ * Attempts analytics helpers (clean, build-safe)
+ * ---------------------------------------------------------------------------
+ * Exports (used by practice pages):
+ * - createAttemptSession({ courseId, subjectId, total })
+ * - updateAttemptSession(sessionId, { correct, blank })
+ * - finalizeAttempt({ courseId, subjectId, examYear, total, correct, blank, score, durationSec?, tags?, sessionId? })
+ *
+ * Design:
+ * - attemptSessions: mutable progress of a practice run
+ * - attempts: immutable summary record per submission
+ * - All writes are scoped to /users/{uid}/...
+ * - Keep names and shapes minimal to avoid breaking other files.
  * ============================================================================
  */
 
@@ -13,122 +20,100 @@ import { db, requireUser, serverTimestamp } from '../firebase/client';
 import {
   collection,
   doc,
-  writeBatch,
   setDoc,
-  increment,
-  type WriteBatch,
+  updateDoc,
 } from 'firebase/firestore';
 
-export type AttemptMode = 'subject' | 'year';
-
-export type AttemptItem = {
-  courseId: string;
-  subjectId: string;
-  questionId: string;
-  selectedIndex: number | null; // index trên mảng options sau shuffle
-  isCorrect: boolean;
-  examYear?: number;
-  difficulty?: string | null;
-  tags?: string[] | string | null;
-  sourceNote?: string | null;
-};
-
+/** Minimal types that callers expect */
 export type AttemptSessionSummary = {
   total: number;
   correct: number;
   blank: number;
-  scorePercent: number; // 0..100
 };
 
-/* =============================================================================
- * Save a batch of attempts (+ optional session summary)
- * ========================================================================== */
+export type FinalizeAttemptInput = {
+  courseId: string;
+  subjectId: string;
+  examYear: number; // 0 for TF/no-year
+  total: number;
+  correct: number;
+  blank: number;
+  score: number; // 0..100
+  durationSec?: number;
+  tags?: string[];
+  sessionId?: string | null;
+};
 
 /**
- * Lưu nhiều attempt cùng lúc.
- * - Mỗi attempt → /users/{uid}/attempts/{autoId}
- * - Nếu truyền `sessionId` + `summary` → ghi /users/{uid}/attemptSessions/{sessionId}
+ * Create a new attempt session document.
+ * @returns {Promise<{sessionId: string}>}
  */
-export async function saveAttemptsBatch(
-  mode: AttemptMode,
-  items: AttemptItem[],
-  opts?: {
-    sessionId?: string;
-    summary?: AttemptSessionSummary;
-  }
-): Promise<void> {
+export async function createAttemptSession(params: {
+  courseId: string;
+  subjectId: string;
+  total: number;
+}): Promise<{ sessionId: string }> {
   const user = await requireUser();
-  if (!items?.length) return;
 
-  const batch: WriteBatch = writeBatch(db);
+  const sessionRef = doc(collection(db, 'users', user.uid, 'attemptSessions'));
+  const sessionId = sessionRef.id;
 
-  // 1) Ghi từng attempt
-  const attemptsCol = collection(db, 'users', user.uid, 'attempts');
-  for (const it of items) {
-    // tạo doc ref auto-id cho batch.set
-    const attemptRef = doc(attemptsCol);
-    batch.set(attemptRef, {
-      userId: user.uid,
-      courseId: it.courseId,
-      subjectId: it.subjectId,
-      questionId: it.questionId,
-      selectedIndex: it.selectedIndex,
-      isCorrect: it.isCorrect,
-      examYear: it.examYear ?? null,
-      difficulty: it.difficulty ?? null,
-      tags: it.tags ?? null,
-      sourceNote: it.sourceNote ?? null,
-      mode,
-      createdAt: serverTimestamp(),
-    });
-  }
+  await setDoc(sessionRef, {
+    userId: user.uid,
+    courseId: params.courseId,
+    subjectId: params.subjectId,
+    sessionId,
+    total: Math.trunc(params.total || 0),
+    correct: 0,
+    blank: 0,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
 
-  // 2) (Optional) Ghi summary theo phiên
-  if (opts?.sessionId && opts?.summary) {
-    const sessRef = doc(db, 'users', user.uid, 'attemptSessions', opts.sessionId);
-    batch.set(sessRef, {
-      userId: user.uid,
-      courseId: items[0].courseId,
-      subjectId: items[0].subjectId,
-      sessionId: opts.sessionId,
-      year: inferYearFromItems(items),
-      total: opts.summary.total,
-      correct: opts.summary.correct,
-      blank: opts.summary.blank,
-      scorePercent: opts.summary.scorePercent,
-      createdAt: serverTimestamp(),
-      mode,
-    }, { merge: true });
-  }
-
-  // 3) (Optional) Ví dụ tăng counters tổng hợp (tuỳ bạn xài hay bỏ)
-  //    /users/{uid}/stats/{courseId_subjectId}
-  try {
-    const cid = items[0].courseId;
-    const sid = items[0].subjectId;
-    const statRef = doc(db, 'users', user.uid, 'stats', `${cid}_${sid}`);
-    batch.set(statRef, {
-      userId: user.uid,
-      courseId: cid,
-      subjectId: sid,
-      attempts: increment(items.length),
-      correct: increment(items.filter((x) => x.isCorrect).length),
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
-  } catch {
-    // không bắt buộc; có thể bỏ block này nếu không cần thống kê
-  }
-
-  await batch.commit();
+  return { sessionId };
 }
 
-/* =============================================================================
- * Helpers
- * ========================================================================== */
+/**
+ * Update counters for an existing attempt session.
+ */
+export async function updateAttemptSession(
+  sessionId: string,
+  summary: Partial<AttemptSessionSummary>
+): Promise<void> {
+  if (!sessionId) return;
+  const user = await requireUser();
 
-function inferYearFromItems(items: AttemptItem[]): number | null {
-  for (const it of items) {
-    if (typeof it.examYear === 'number') return it.examYear;
-  }
-  return null;
+  const ref = doc(db, 'users', user.uid, 'attemptSessions', sessionId);
+  await updateDoc(ref, {
+    ...(typeof summary.total === 'number' ? { total: Math.trunc(summary.total) } : {}),
+    ...(typeof summary.correct === 'number' ? { correct: Math.trunc(summary.correct) } : {}),
+    ...(typeof summary.blank === 'number' ? { blank: Math.trunc(summary.blank) } : {}),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Finalize a practice attempt (immutable).
+ * Creates a new /users/{uid}/attempts/{autoId} record.
+ */
+export async function finalizeAttempt(input: FinalizeAttemptInput): Promise<void> {
+  const user = await requireUser();
+
+  const attemptsCol = collection(db, 'users', user.uid, 'attempts');
+  const ref = doc(attemptsCol); // auto-id
+
+  await setDoc(ref, {
+    userId: user.uid,
+    courseId: input.courseId,
+    subjectId: input.subjectId,
+    examYear: Math.trunc(input.examYear || 0),
+    total: Math.trunc(input.total || 0),
+    correct: Math.trunc(input.correct || 0),
+    blank: Math.trunc(input.blank || 0),
+    score: Math.trunc(input.score || 0),
+    durationSec: typeof input.durationSec === 'number' ? Math.max(0, Math.trunc(input.durationSec)) : null,
+    tags: Array.isArray(input.tags) ? input.tags : null,
+    sessionId: input.sessionId ?? null,
+    createdAt: serverTimestamp(),
+  });
 }

@@ -71,7 +71,7 @@ export default function CoursePage({ params }: { params: { course: string } }) {
       try {
         setLoading(true);
         const [m, s] = await Promise.all([loadManifest(), loadSubjectsJson()]);
-        const ys = await listAvailableYearsForCourse(course, m, s);
+        const ys = await listAvailableYearsForCourse(course, s);// subjectsJson (s), không phải manifest (m)
         if (!mounted) return;
         setManifest(m);
         setSubjectsJson(s);

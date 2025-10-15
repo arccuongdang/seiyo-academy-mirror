@@ -2,26 +2,30 @@
 
 /**
  * ============================================================================
- *  Courses – Danh sách khóa học (từ subjects.json – Plan B)
+ *  Courses – Danh sách khóa học (Plan B: đọc public/snapshots/subjects.json)
  * ----------------------------------------------------------------------------
- *  Nguồn dữ liệu:
- *    - public/snapshots/subjects.json  → loadSubjectsJson()
- *  Hiển thị:
- *    - Mỗi khóa (courseId) + số môn (subjects) thuộc khóa đó
- *  Ghi chú:
- *    - Không dùng "@/"; chỉ import tương đối.
+ *  TÍNH NĂNG CHẶN:
+ *    - ĐƯỢC GIỮ NGUYÊN qua 2 component: <AuthGate> và <ProfileGate>
+ *      (nên sau bước redirect / -> /courses, việc chặn vẫn hoạt động)
+ *  DỮ LIỆU:
+ *    - loadSubjectsJson() trả về { version, items: Array<{ courseId: string, ... }> }
  * ============================================================================
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
 // Loader Plan B
 import { loadSubjectsJson } from '../../lib/qa/excel';
 
-// Gates
+// Gates (giữ nguyên để đảm bảo chặn auth/profile)
 import AuthGate from '../../components/AuthGate';
 import ProfileGate from '../../components/ProfileGate';
+
+type SubjectsJson = {
+  version?: string | number;
+  items?: Array<{ courseId?: string }>;
+};
 
 type CourseMeta = {
   courseId: string;
@@ -38,12 +42,12 @@ export default function CoursesPage() {
     let mounted = true;
     (async () => {
       try {
-        const subjects = await loadSubjectsJson(); // { version, items: [...] }
+        const subjects = (await loadSubjectsJson()) as SubjectsJson; // { version, items: [...] }
         if (!mounted) return;
 
         const countByCourse: Record<string, number> = {};
         for (const it of subjects.items || []) {
-          const cid = String(it.courseId || '').trim();
+          const cid = String(it?.courseId ?? '').trim();
           if (!cid) continue;
           countByCourse[cid] = (countByCourse[cid] ?? 0) + 1;
         }
@@ -69,9 +73,7 @@ export default function CoursesPage() {
     <AuthGate>
       <ProfileGate>
         <main style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
-          <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>
-            Khóa học
-          </h1>
+          <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>Khóa học</h1>
 
           {loading && <div>Đang tải…</div>}
           {err && <div style={{ color: 'crimson' }}>Lỗi: {err}</div>}
@@ -104,9 +106,7 @@ export default function CoursesPage() {
                 }}
               >
                 <div style={{ fontWeight: 800 }}>{c.courseId}</div>
-                <div style={{ color: '#6b7280', fontSize: 12 }}>
-                  {c.subjectsCount} môn
-                </div>
+                <div style={{ color: '#6b7280', fontSize: 12 }}>{c.subjectsCount} môn</div>
               </Link>
             ))}
           </div>

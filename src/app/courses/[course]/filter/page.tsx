@@ -1,19 +1,17 @@
 'use client';
 
 /**
- * ============================================================================
- *  Courses › {course} › Filter (dùng FilterForm component)
- *  - Page chịu trách nhiệm: đọc URL, fetch manifest/subjects, tính
- *    availableYears/availableSubjects.
- *  - FilterForm: UI + state cục bộ + localStorage + gọi onConfirm.
- * ============================================================================
+ * /courses/[course]/filter
+ * - GIỮ NGUYÊN: mode subject/year; gọi FilterForm; điều hướng start/year
+ * - BỔ SUNG: ƯU TIÊN dùng manifest.tagsIndex để liệt kê Tags (Union)
+ *            Fallback: quét snapshot latest (giữ logic cũ)
+ * - Difficulty A/AA/AAA vẫn giữ như trước (nếu bạn đã bật UI ở FilterForm)
  */
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams, useParams, useRouter } from 'next/navigation';
+import FilterForm from '../../../../components/FilterForm';
 
-// helpers (Plan B, relative import)
 import {
   loadManifest,
   loadSubjectsJson,
@@ -21,118 +19,131 @@ import {
   listSubjectsForYear,
 } from '../../../../lib/qa/excel';
 
-import type { SnapshotManifest, SubjectsJSON } from '../../../../lib/qa/schema';
+type ManifestIndex = {
+  [courseId: string]: {
+    [subjectId: string]: {
+      versions: { ts: number; path: string }[];
+      latest: { ts: number; path: string };
+    };
+  };
+};
 
-// component
-import FilterForm from '../../../../components/FilterForm';
+type SnapshotAny = {
+  items?: any[];
+  questions?: any[];
+};
 
-type Mode = 'subject' | 'year';
-type ThinSubject = { subjectId: string; nameJA?: string; nameVI?: string };
-
-function toInt(v: string | null): number | null {
-  if (!v) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
+// ===== helper =====
+async function fetchJson<T = any>(url: string): Promise<T> {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Fetch failed: ${url}`);
+  return res.json() as Promise<T>;
+}
+function resolveLatestSnapshotPath(manifest: any, courseId: string, subjectId: string): string | null {
+  const idx: ManifestIndex | undefined = manifest?.index;
+  if (idx && idx[courseId] && idx[courseId][subjectId]?.latest?.path) {
+    return String(idx[courseId][subjectId].latest.path);
+  }
+  const files: any[] = Array.isArray(manifest?.files) ? manifest.files : [];
+  const candidates = files
+    .filter((f) => typeof f?.path === 'string' && f.path.includes(`/${subjectId}-questions.v`))
+    .map((f) => String(f.path));
+  if (!candidates.length) return null;
+  const pick = candidates
+    .map((p) => ({ p, ts: Number((p.match(/\.v(\d+)\.json$/) || [])[1] || '0') }))
+    .sort((a, b) => b.ts - a.ts)[0];
+  return pick?.p || candidates[0];
+}
+function collectTags(snapshot: SnapshotAny) {
+  const rows: any[] = Array.isArray(snapshot?.questions)
+    ? snapshot.questions
+    : Array.isArray(snapshot?.items)
+    ? snapshot.items
+    : [];
+  const set = new Set<string>();
+  for (const r of rows) {
+    const tags: any = (r as any).tags;
+    if (Array.isArray(tags)) tags.forEach((t) => set.add(String(t)));
+    else if (typeof tags === 'string' && tags.trim()) set.add(tags.trim());
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
 
-export default function FilterPage({ params }: { params: { course: string } }) {
-  const { course } = params;
+export default function FilterPage() {
   const router = useRouter();
-  const sp = useSearchParams();
+  const params = useParams<{ course: string }>();
+  const search = useSearchParams();
 
-  const qSubject = sp.get('subject');
-  const qYear = toInt(sp.get('year'));
-  const mode: Mode = qSubject ? 'subject' : qYear ? 'year' : 'subject';
+  const courseId = decodeURIComponent(String(params?.course || ''));
+  const lockedSubjectId = search.get('subject');
+  const lockedYearStr = search.get('year');
+  const mode: 'subject' | 'year' = lockedSubjectId ? 'subject' : lockedYearStr ? 'year' : 'subject';
+  const lockedYear = lockedYearStr ? Number(lockedYearStr) : null;
 
-  // nền
-  const [manifest, setManifest] = useState<SnapshotManifest | null>(null);
-  const [subjectsJson, setSubjectsJson] = useState<SubjectsJSON | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  // dữ liệu cho form
+  const [manifest, setManifest] = useState<any | null>(null);
+  const [subjectsJson, setSubjectsJson] = useState<any | null>(null);
   const [availableYears, setAvailableYears] = useState<number[]>([]);
-  const [availableSubjects, setAvailableSubjects] = useState<ThinSubject[]>([]);
+  const [availableSubjects, setAvailableSubjects] = useState<{ subjectId: string; nameJA?: string; nameVI?: string }[]>(
+    []
+  );
 
-  // fetch manifest + subjects
+  // Tags (Union)
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
+  const [pickedTags, setPickedTags] = useState<string[]>([]);
+  const [availableDiffs, setAvailableDiffs] = useState<string[]>([]);
+  const [pickedDiffs, setPickedDiffs] = useState<string[]>([]);
+
   useEffect(() => {
-    let mounted = true;
     (async () => {
       try {
-        setLoading(true);
-        const [m, sj] = await Promise.all([loadManifest(), loadSubjectsJson()]);
-        if (!mounted) return;
+        const [m, s] = await Promise.all([loadManifest(), loadSubjectsJson()]);
         setManifest(m);
-        setSubjectsJson(sj);
-        setLoading(false);
-      } catch (e: any) {
-        if (!mounted) return;
-        setErr(e?.message || 'Không tải được dữ liệu');
-        setLoading(false);
+        setSubjectsJson(s);
+
+        if (mode === 'subject' && lockedSubjectId) {
+          const years = await listYearsForSubject(courseId, lockedSubjectId);
+          setAvailableYears(years || []);
+
+          // NEW: ưu tiên manifest.tagsIndex nếu có
+          const idx = m?.tagsIndex?.[courseId]?.[lockedSubjectId];
+          if (Array.isArray(idx)) {
+            const ids = idx.map((t: any) => String(t.id)).filter(Boolean);
+            setAvailableTags(ids);
+            setPickedTags((prev) => prev.filter((x) => ids.includes(x)));
+          } else {
+            // Fallback: quét snapshot latest
+            const latestPath = resolveLatestSnapshotPath(m, courseId, lockedSubjectId);
+            if (latestPath) {
+              const snap = await fetchJson<SnapshotAny>(`/snapshots/${latestPath}`);
+              const tags = collectTags(snap);
+              setAvailableTags(tags);
+              setPickedTags((p) => p.filter((x) => tags.includes(x)));
+            } else {
+              setAvailableTags([]);
+              setPickedTags([]);
+            }
+          }
+        }
+
+        if (mode === 'year' && lockedYear) {
+          const subs = await listSubjectsForYear(courseId, lockedYear, s);
+          setAvailableSubjects(subs || []);
+        }
+      } catch (e) {
+        console.error(e);
       }
     })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  }, [courseId, mode, lockedSubjectId, lockedYear]);
 
-  // tính availableYears (mode=subject)
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      if (mode !== 'subject' || !qSubject) {
-        setAvailableYears([]);
-        return;
-      }
-      try {
-        const ys = await listYearsForSubject(course, qSubject, manifest || undefined);
-        if (!mounted) return;
-        setAvailableYears(ys);
-      } catch {
-        /* noop */
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [mode, qSubject, course, manifest]);
+  function toggleIn<T extends string>(arr: T[], v: T): T[] {
+    const set = new Set(arr);
+    if (set.has(v)) set.delete(v);
+    else set.add(v);
+    return Array.from(set);
+  }
 
-  // tính availableSubjects (mode=year)
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      if (mode !== 'year' || !qYear) {
-        setAvailableSubjects([]);
-        return;
-      }
-      try {
-        const list = await listSubjectsForYear(
-          course,
-          qYear,
-          manifest || undefined,
-          subjectsJson || undefined
-        );
-        if (!mounted) return;
-        // map sang “type mỏng” đúng 1 lần
-        setAvailableSubjects(
-          list.map((s) => ({
-            subjectId: s.subjectId,
-            nameJA: s.nameJA,
-            nameVI: s.nameVI,
-          }))
-        );
-      } catch {
-        /* noop */
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [mode, qYear, course, manifest, subjectsJson]);
-
-  // handler confirm từ Form → build URL & push
   function handleConfirm(params: {
-    mode: Mode;
+    mode: 'subject' | 'year';
     subjectId?: string;
     year?: number;
     randomLast?: 5 | 10 | null;
@@ -141,75 +152,110 @@ export default function FilterPage({ params }: { params: { course: string } }) {
     shuffle?: boolean;
   }) {
     if (params.mode === 'subject') {
-      const usp = new URLSearchParams();
-      if (!params.subjectId) return alert('Thiếu subjectId');
-      usp.set('subject', params.subjectId);
-      if (params.randomLast) usp.set('randomLast', String(params.randomLast));
-      if (!params.randomLast && params.years && params.years.length) {
-        usp.set('years', params.years.join(','));
-      }
-      if (params.count) usp.set('count', String(params.count));
-      usp.set('shuffle', params.shuffle ? '1' : '0');
-      router.push(`/courses/${course}/practice/start?` + usp.toString());
-    } else {
-      const usp = new URLSearchParams();
-      if (!params.subjectId || !params.year) return alert('Thiếu subjectId hoặc year');
-      usp.set('subject', params.subjectId);
-      usp.set('year', String(params.year));
-      usp.set('shuffle', params.shuffle ? '1' : '0');
-      router.push(`/courses/${course}/practice/year?` + usp.toString());
+      const q = new URLSearchParams();
+      q.set('subject', String(params.subjectId));
+      if (params.randomLast) q.set('randomLast', String(params.randomLast));
+      if (!params.randomLast && params.years && params.years.length) q.set('years', params.years.join(','));
+      if (params.count) q.set('count', String(params.count));
+      if (params.shuffle) q.set('shuffle', '1');
+      if (pickedTags.length) q.set('tags', pickedTags.join(','));       // Union (AND)
+      if (pickedDiffs.length) q.set('difficulty', pickedDiffs.join(',')); // nhiều chọn
+      router.push(`/courses/${encodeURIComponent(courseId)}/practice/start?${q.toString()}`);
+      return;
     }
-  }
-
-  // guards
-  if (err) {
-    return (
-      <main style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
-        <div style={{ marginBottom: 12 }}>
-          <Link href={`/courses/${course}`}>&larr; Quay lại khoá {course}</Link>
-        </div>
-        <div style={{ color: 'crimson' }}>Lỗi: {err}</div>
-      </main>
-    );
+    const q = new URLSearchParams();
+    if (params.subjectId) q.set('subject', String(params.subjectId));
+    if (params.year) q.set('year', String(params.year));
+    if (params.shuffle) q.set('shuffle', '1');
+    router.push(`/courses/${encodeURIComponent(courseId)}/practice/year?${q.toString()}`);
   }
 
   return (
-    <main style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
-      <div style={{ marginBottom: 12 }}>
-        <Link href={`/courses/${course}`}>&larr; Quay lại khoá {course}</Link>
-      </div>
-
-      <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>
-        Bộ lọc ({mode === 'subject' ? 'Theo môn' : 'Theo năm'})
+    <main style={{ padding: 24, maxWidth: 960, margin: '0 auto', display: 'grid', gap: 16 }}>
+      <h1 style={{ fontSize: 22, fontWeight: 800 }}>
+        Bộ lọc – {courseId} {mode === 'subject' ? `(theo môn)` : `(theo năm)`}
       </h1>
 
-      {loading && <div>Đang tải dữ liệu...</div>}
+      {mode === 'subject' && (
+        <>
+          {/* Union Tags */}
+          {availableTags.length > 0 && (
+            <section style={box}>
+              <div style={boxTitle}>Tags (Union)</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {availableTags.map((t) => {
+                  const active = pickedTags.includes(t);
+                  return (
+                    <button
+                      key={t}
+                      onClick={() => setPickedTags((prev) => toggleIn(prev, t))}
+                      style={chip(active)}
+                      aria-pressed={active}
+                    >
+                      {t}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={hint}>Chọn nhiều tag để lấy giao (AND). Bỏ trống = không lọc theo tag.</div>
+            </section>
+          )}
 
-      {/* MODE = SUBJECT */}
-      {!loading && mode === 'subject' && (
-        <FilterForm
-          mode="subject"
-          courseId={course}
-          lockedSubjectId={qSubject || undefined}
-          availableYears={availableYears}
-          defaults={{ count: 10, shuffleOptions: false }}
-          storageKey={`seiyo:filter:${course}:subject`}
-          onConfirm={handleConfirm}
-        />
+          {/* Difficulty (nếu dự án của bạn đang dùng) */}
+          {availableDiffs.length > 0 && (
+            <section style={box}>
+              <div style={boxTitle}>Độ khó</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {availableDiffs.map((d) => {
+                  const active = pickedDiffs.includes(d);
+                  return (
+                    <button
+                      key={d}
+                      onClick={() => setPickedDiffs((prev) => toggleIn(prev, d))}
+                      style={chip(active)}
+                      aria-pressed={active}
+                    >
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={hint}>Có thể chọn nhiều độ khó (A/AA/AAA). Bỏ trống = không lọc độ khó.</div>
+            </section>
+          )}
+        </>
       )}
 
-      {/* MODE = YEAR */}
-      {!loading && mode === 'year' && (
-        <FilterForm
-          mode="year"
-          courseId={course}
-          lockedYear={qYear ?? undefined}
-          availableSubjects={availableSubjects}
-          defaults={{ shuffleOptions: false }}
-          storageKey={`seiyo:filter:${course}:year`}
-          onConfirm={handleConfirm}
-        />
-      )}
+      {/* Form chính giữ nguyên */}
+      <FilterForm
+        mode={mode}
+        courseId={courseId}
+        lockedSubjectId={lockedSubjectId}
+        lockedYear={lockedYear}
+        availableYears={availableYears}
+        availableSubjects={availableSubjects}
+        defaults={{ count: 10, shuffleOptions: false }}
+        storageKey={`seiyo:filter:${courseId}:${mode}`}
+        onConfirm={handleConfirm}
+      />
     </main>
   );
+}
+
+const box: React.CSSProperties = {
+  border: '1px solid #e5e7eb',
+  borderRadius: 12,
+  padding: 16,
+};
+const boxTitle: React.CSSProperties = { fontWeight: 800, marginBottom: 8 };
+const hint: React.CSSProperties = { color: '#6b7280', fontSize: 12, marginTop: 6 };
+function chip(active: boolean): React.CSSProperties {
+  return {
+    padding: '8px 12px',
+    borderRadius: 8,
+    border: active ? '2px solid #175cd3' : '1px solid #e5e7eb',
+    background: active ? '#eff6ff' : '#fff',
+    fontWeight: active ? 700 : 500,
+    cursor: 'pointer',
+  };
 }

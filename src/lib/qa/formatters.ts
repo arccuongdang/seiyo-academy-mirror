@@ -60,6 +60,18 @@ function normalizeTags(tags?: string[] | string | null): string[] | undefined {
     .filter(Boolean);
 }
 
+/** (NEW) đọc cờ TF từ RAW, chấp nhận 'answerIsOption' hoặc 'AnswerIsOption' */
+function readTFAnswer(raw: any): boolean | undefined {
+  const v = raw?.answerIsOption ?? raw?.AnswerIsOption;
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (s === 'true') return true;
+    if (s === 'false') return false;
+  }
+  return undefined;
+}
+
 /* =============================================================================
  * SECTION 2. Deterministic shuffle (seeded)
  *  - Xáo trộn mà vẫn reproducible theo seed
@@ -188,6 +200,27 @@ export function toQARenderItemFromSnapshot(
 
   const filteredOptions = options.filter(Boolean) as QARenderOption[];
 
+  // (NEW) TF fallback: nếu không có option 1..5 mà là TF → tự sinh 2 option
+  let finalOptions = filteredOptions;
+  const qt = (raw as any).questionType?.toString().toUpperCase();
+  if ((!finalOptions || finalOptions.length === 0) && qt === 'TF') {
+    const ans = readTFAnswer(raw); // true = "Đúng", false = "Sai"
+    // Bạn có thể thay text bằng "True" / "False" hoặc JA "正しい" / "誤り"
+    const tTrueJA = '正しい';
+    const tFalseJA = '誤り';
+    const tTrueVI = 'Đúng';
+    const tFalseVI = 'Sai';
+
+    const trueText  = pickText(tTrueJA,  tTrueVI,  lang) || tTrueJA;
+    const falseText = pickText(tFalseJA, tFalseVI, lang) || tFalseJA;
+
+    finalOptions = [
+      { isAnswer: ans === true,  text: trueText,  image: null, explanation: undefined },
+      { isAnswer: ans === false, text: falseText, image: null, explanation: undefined },
+    ];
+  }
+
+
   return {
     id: raw.questionId,
     courseId: raw.courseId,
@@ -198,12 +231,13 @@ export function toQARenderItemFromSnapshot(
     image,
     explanation,
 
-    options: filteredOptions,
+    options: finalOptions, // ← dùng finalOptions thay vì filteredOptions
 
     difficulty: (raw.difficulty ?? null) as Difficulty | null,
     sourceNote: (raw.sourceNote ?? null) as SourceCode | string | null,
     tags: normalizeTags(raw.tags),
   };
+
 }
 
 /* =============================================================================

@@ -1,18 +1,10 @@
-// src/lib/qa/excel.ts
 /**
  * =============================================================================
  *  Snapshots loader & helpers (Plan B)
- *  - Đọc public/snapshots/manifest.json và subjects.json
- *  - Chọn snapshot mới nhất theo (courseId, subjectId)
- *  - Helpers cho UI:
- *      * listSubjectsForCourse
- *      * listYearsForSubject
- *      * listSubjectsForYear
- *      * listAvailableYearsForCourse
- *
- *  Ghi chú:
- *  - Tránh phụ thuộc vào các type không được export trong schema.ts
- *    → định nghĩa "type mỏng" cục bộ cho ManifestFileEntry, SubjectsItem.
+ *  - FE: đọc public/snapshots/manifest.json và subjects.json
+ *  - Chọn snapshot mới nhất cho (courseId, subjectId)
+ *  - Helpers: listYearsForSubject / listSubjectsForYear / listAvailableYearsForCourse
+ *  - Admin: parser TagsList từ Excel (NEW)
  * =============================================================================
  */
 
@@ -20,53 +12,42 @@ import type {
   SnapshotManifest,
   SubjectsJSON,
   QuestionSnapshotItem,
+  TagsIndex,  // NEW
+  TagDef,     // NEW
 } from './schema';
 
-/* =============================================================================
- * SECTION A. Local thin types (giảm phụ thuộc)
- * ========================================================================== */
+/* =================== Thin types & caches =================== */
 
-/** Bản ghi 1 file trong manifest (type mỏng, theo format manifest.json) */
 type ThinManifestFileEntry = {
   courseId: string;
   subjectId: string;
-  path: string;        // đường dẫn tương đối bên trong /snapshots
-  version?: number;    // timestamp/number; càng lớn càng mới
+  path: string;
+  version?: number;
 };
 
-/** Bản ghi môn (type mỏng theo subjects.json) */
 export type ThinSubjectsItem = {
   courseId: string;
   subjectId: string;
   nameJA?: string;
   nameVI?: string;
-  descriptionJA?: string;  // <-- thêm
-  descriptionVI?: string;  // <-- thêm 
+  descriptionJA?: string;
+  descriptionVI?: string;
   order?: number;
 };
 
-/* =============================================================================
- * SECTION B. Constants & in-memory caches
- * ========================================================================== */
-
-const SNAPSHOT_BASE = '/snapshots'; // served from public/snapshots/*
+const SNAPSHOT_BASE = '/snapshots';
 const manifestCache: { value: SnapshotManifest | null } = { value: null };
 const subjectsCache: { value: SubjectsJSON | null } = { value: null };
-const rawCache = new Map<string, QuestionSnapshotItem[]>(); // key: `${courseId}:${subjectId}`
-
-/* =============================================================================
- * SECTION C. Low-level fetchers
- * ========================================================================== */
+const rawCache = new Map<string, QuestionSnapshotItem[]>();
 
 async function fetchJSON<T = any>(path: string): Promise<T> {
   const res = await fetch(path, { cache: 'no-store' });
-  if (!res.ok) {
-    throw new Error(`Fetch failed ${path}: ${res.status} ${res.statusText}`);
-  }
+  if (!res.ok) throw new Error(`Fetch failed ${path}: ${res.status} ${res.statusText}`);
   return (await res.json()) as T;
 }
 
-/** Load manifest.json (cached in-memory) */
+/* =================== Loaders =================== */
+
 export async function loadManifest(): Promise<SnapshotManifest> {
   if (manifestCache.value) return manifestCache.value;
   const data = await fetchJSON<SnapshotManifest>(`${SNAPSHOT_BASE}/manifest.json`);
@@ -74,7 +55,6 @@ export async function loadManifest(): Promise<SnapshotManifest> {
   return data;
 }
 
-/** Load subjects.json (cached in-memory) */
 export async function loadSubjectsJson(): Promise<SubjectsJSON> {
   if (subjectsCache.value) return subjectsCache.value;
   const data = await fetchJSON<SubjectsJSON>(`${SNAPSHOT_BASE}/subjects.json`);
@@ -82,11 +62,8 @@ export async function loadSubjectsJson(): Promise<SubjectsJSON> {
   return data;
 }
 
-/* =============================================================================
- * SECTION D. Subjects helpers
- * ========================================================================== */
+/* =================== Subjects helpers =================== */
 
-/** Liệt kê các môn của 1 khóa theo subjects.json, sắp theo 'order' rồi subjectId */
 export function listSubjectsForCourse(courseId: string, subjectsJson: SubjectsJSON): ThinSubjectsItem[] {
   const items = (subjectsJson.items || []).filter((it: any) => it.courseId === courseId);
   const thin: ThinSubjectsItem[] = items.map((it: any) => ({
@@ -94,8 +71,8 @@ export function listSubjectsForCourse(courseId: string, subjectsJson: SubjectsJS
     subjectId: it.subjectId,
     nameJA: it.nameJA,
     nameVI: it.nameVI,
-    descriptionJA: it.descriptionJA,   // <-- thêm
-    descriptionVI: it.descriptionVI,   // <-- thêm
+    descriptionJA: it.descriptionJA,
+    descriptionVI: it.descriptionVI,
     order: it.order,
   }));
   return thin.sort((a, b) => {
@@ -106,7 +83,6 @@ export function listSubjectsForCourse(courseId: string, subjectsJson: SubjectsJS
   });
 }
 
-/** Tìm metadata 1 môn (type mỏng) */
 export function findSubjectMeta(
   courseId: string,
   subjectId: string,
@@ -120,18 +96,15 @@ export function findSubjectMeta(
         subjectId: found.subjectId,
         nameJA: found.nameJA,
         nameVI: found.nameVI,
-        descriptionJA: found.descriptionJA,  // <-- thêm
-        descriptionVI: found.descriptionVI,  // <-- thêm
+        descriptionJA: found.descriptionJA,
+        descriptionVI: found.descriptionVI,
         order: found.order,
       }
     : null;
 }
 
-/* =============================================================================
- * SECTION E. Snapshot file selection & RAW loader
- * ========================================================================== */
+/* =================== Snapshot selection & RAW loader =================== */
 
-/** Trích các file của (courseId, subjectId) từ manifest → mảng thin entries */
 function collectFilesFor(courseId: string, subjectId: string, manifest: SnapshotManifest): ThinManifestFileEntry[] {
   const files = (manifest.files || []) as any[];
   const filtered = files.filter((f) => f.courseId === courseId && f.subjectId === subjectId);
@@ -143,7 +116,6 @@ function collectFilesFor(courseId: string, subjectId: string, manifest: Snapshot
   }));
 }
 
-/** Chọn entry snapshot mới nhất cho (courseId, subjectId) từ manifest.files */
 export function selectLatestFile(
   courseId: string,
   subjectId: string,
@@ -155,7 +127,6 @@ export function selectLatestFile(
   return files[0];
 }
 
-/** Tải RAW snapshot mới nhất → mảng QuestionSnapshotItem */
 export async function loadRawQuestionsFor(
   courseId: string,
   subjectId: string
@@ -169,12 +140,8 @@ export async function loadRawQuestionsFor(
     rawCache.set(cacheKey, []);
     return [];
   }
-
-  // path trong manifest là tương đối với /snapshots
   const url = `${SNAPSHOT_BASE}/${file.path}`;
   const data = await fetchJSON<QuestionSnapshotItem[] | { items: QuestionSnapshotItem[] }>(url);
-
-  // Chấp nhận 2 format: array thuần, hoặc { items: [...] }
   const arr: QuestionSnapshotItem[] = Array.isArray(data)
     ? data
     : Array.isArray((data as any).items)
@@ -185,20 +152,12 @@ export async function loadRawQuestionsFor(
   return arr;
 }
 
-/* =============================================================================
- * SECTION F. Years & subjects availability (dùng cho Courses/Filter)
- * ========================================================================== */
+/* =================== Years & subjects availability =================== */
 
-/**
- * Trả về danh sách năm (giảm dần) có thật trong snapshot mới nhất của (course, subject).
- * Đọc trực tiếp từ field examYear của từng câu hỏi.
- */
 export async function listYearsForSubject(
   courseId: string,
-  subjectId: string,
-  manifest?: SnapshotManifest
+  subjectId: string
 ): Promise<number[]> {
-  // manifest arg optional để caller đã load sẵn thì truyền vào cho tiết kiệm (không bắt buộc)
   const raws = await loadRawQuestionsFor(courseId, subjectId);
   const set = new Set<number>();
   for (const q of raws) {
@@ -208,41 +167,27 @@ export async function listYearsForSubject(
   return Array.from(set).sort((a, b) => b - a);
 }
 
-/**
- * Liệt kê các môn (type mỏng) có ít nhất 1 câu hỏi của (course, year).
- * Duyệt qua toàn bộ môn của khóa và kiểm tra snapshot mới nhất từng môn.
- */
 export async function listSubjectsForYear(
   courseId: string,
   year: number,
-  manifest?: SnapshotManifest,
   subjectsJson?: SubjectsJSON
 ): Promise<ThinSubjectsItem[]> {
   const sj = subjectsJson ?? (await loadSubjectsJson());
-  const subjects = listSubjectsForCourse(courseId, sj); // đã trả về type mỏng
-
+  const subjects = listSubjectsForCourse(courseId, sj);
   const result: ThinSubjectsItem[] = [];
   for (const s of subjects) {
     const raws = await loadRawQuestionsFor(courseId, s.subjectId);
-    if (raws.some((q) => Number((q as any).examYear) === year)) {
-      result.push(s);
-    }
+    if (raws.some((q) => Number((q as any).examYear) === year)) result.push(s);
   }
   return result;
 }
 
-/**
- * Tập hợp tất cả năm (giảm dần) xuất hiện trong khóa (gộp qua mọi môn).
- * Hữu ích cho Courses page để render năm thật.
- */
 export async function listAvailableYearsForCourse(
   courseId: string,
-  manifest?: SnapshotManifest,
   subjectsJson?: SubjectsJSON
 ): Promise<number[]> {
   const sj = subjectsJson ?? (await loadSubjectsJson());
   const subjects = listSubjectsForCourse(courseId, sj);
-
   const set = new Set<number>();
   for (const s of subjects) {
     const years = await listYearsForSubject(courseId, s.subjectId);
@@ -251,12 +196,76 @@ export async function listAvailableYearsForCourse(
   return Array.from(set).sort((a, b) => b - a);
 }
 
-/* =============================================================================
- * SECTION G. Convenience helpers for Filter logic
- * ========================================================================== */
+/* =================== Convenience =================== */
 
-/** Lấy N năm gần nhất từ danh sách đã có (nếu ít hơn N thì trả tất cả) */
 export function pickLastYears(allYears: number[], n: 5 | 10): number[] {
   if (!allYears?.length) return [];
   return allYears.slice(0, n);
+}
+
+/* =================== (NEW) TagsList parser for Admin Publish =================== */
+/* Layout: cột “No” + từng cặp cột JA / JV(hoặc VI) cho mỗi (courseId, subjectId)
+ * id = {subjectId}-{No}
+ */
+
+import * as XLSX from 'xlsx';
+
+export function buildTagsIndexFromSheet(ws: XLSX.WorkSheet): TagsIndex {
+  const rows = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' }) as string[][];
+  const H = rows.length;
+  const W = Math.max(...rows.map(r => r.length));
+
+  type Col = { course: string; subject: string; lang: string; j: number };
+  const cols: Col[] = [];
+  for (let j = 0; j < W; j++) {
+    const course = (rows[0]?.[j] || '').trim();
+    const subject = (rows[1]?.[j] || '').trim();
+    const lang = (rows[2]?.[j] || '').trim().toUpperCase();
+    if (!course || !subject) continue;
+    if (subject.toLowerCase() === 'no') continue; // bỏ cột "No"
+    cols.push({ course, subject, lang, j });
+  }
+
+  // group theo (course, subject) thành cặp JA + VI/JV
+  const groups = new Map<string, { ja?: Col; vi?: Col }>();
+  for (const c of cols) {
+    const key = `${c.course}__${c.subject}`;
+    const g = groups.get(key) || {};
+    if (c.lang === 'JA' || !g.ja) g.ja = c;
+    if (c.lang === 'JV' || c.lang === 'VI') g.vi = c;
+    groups.set(key, g);
+  }
+
+  const out: TagsIndex = {};
+  for (const [key, g] of groups) {
+    const [courseId, subjectId] = key.split('__');
+    out[courseId] ??= {};
+    const arr: TagDef[] = [];
+    for (let i = 3; i < H; i++) { // từ hàng 4 (index 3)
+      const nameJA = g.ja ? (rows[i]?.[g.ja.j] || '').trim() : '';
+      const nameVI = g.vi ? (rows[i]?.[g.vi.j] || '').trim() : '';
+      if (!nameJA && !nameVI) continue;
+      const id = `${subjectId}-${i - 3}`; // id = {subjectId}-{No}
+      arr.push({ id, nameJA, nameVI: nameVI || undefined });
+    }
+    out[courseId][subjectId] = arr;
+  }
+  return out;
+}
+
+export function parseTagsIndexFromWorkbook(wb: XLSX.WorkBook): TagsIndex {
+  const ws = wb.Sheets['TagsList'] || wb.Sheets['Taglists'];
+  return ws ? buildTagsIndexFromSheet(ws) : {};
+}
+
+/* =================== (NEW) Helper cho Filter (tuỳ chọn dùng) =================== */
+
+export function pickTagIdsFromIndex(
+  tagsIndex: TagsIndex | null | undefined,
+  courseId: string,
+  subjectId: string
+): string[] {
+  const arr = tagsIndex?.[courseId]?.[subjectId];
+  if (!Array.isArray(arr)) return [];
+  return arr.map(t => String(t.id)).filter(Boolean);
 }
