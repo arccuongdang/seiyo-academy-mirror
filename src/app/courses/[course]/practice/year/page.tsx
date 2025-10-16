@@ -1,8 +1,5 @@
 'use client';
 
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
-
 /**
  * ============================================================================
  * Year Practice — Luyện theo năm (mode=year)
@@ -23,7 +20,8 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 // Loaders/formatters
-import { loadRawQuestionsForClient, toQARenderItemFromSnapshot } from '../../../../../lib/qa/formatters';
+import { loadRawQuestionsFor } from '../../../../../lib/qa/excel';
+import { toQARenderItemFromSnapshot } from '../../../../../lib/qa/formatters';
 
 // Attempts
 import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession } from '../../../../../lib/analytics/attempts';
@@ -111,13 +109,13 @@ export default function YearPracticePage({ params }: { params: { course: string 
     setErr(null);
     (async () => {
       try {
-        if (!allowed.has(subject.toUpperCase()) || !Number.isFinite(fixedYear)) {
+        if (!allowed.has(subject.toUpperCase())) {
           setErr('Tham số không hợp lệ. Hãy chọn môn và năm hợp lệ từ trang Hub.');
           setLoading(false);
           return;
         }
-        const raws = await loadRawQuestionsForClient(course, subject.toUpperCase());
-        setRawItems(Array.isArray(raws) ? raws : []);
+        const raws = await loadRawQuestionsFor(course, subject);
+        setRawItems(raws);
         setLoading(false);
       } catch (e: any) {
         setErr(e?.message || 'Lỗi tải dữ liệu');
@@ -128,10 +126,10 @@ export default function YearPracticePage({ params }: { params: { course: string 
 
   /* -------- Lọc đúng năm + format + tạo session -------- */
   useEffect(() => {
-    if (!Array.isArray(rawItems) || rawItems.length === 0 || !Number.isFinite(fixedYear)) return;
+    if (!rawItems.length || !fixedYear) return;
 
     const rows = rawItems.filter(q => Number(q.examYear) === fixedYear);
-    if (!rows || rows.length === 0) {
+    if (rows.length === 0) {
       setErr(`Chưa có câu hỏi cho ${subject} năm ${fixedYear}.`);
       setQuestions([]);
       return;
@@ -166,6 +164,11 @@ export default function YearPracticePage({ params }: { params: { course: string 
     // tạo session nếu đăng nhập
     (async () => {
       try {
+        if (!allowed.has(subject.toUpperCase())) {
+          setErr('Tham số không hợp lệ. Hãy chọn môn và năm hợp lệ từ trang Hub.');
+          setLoading(false);
+          return;
+        }
         const auth = getAuth();
         if (auth.currentUser?.uid) {
           const { sessionId } = await createAttemptSession({
@@ -233,6 +236,11 @@ export default function YearPracticePage({ params }: { params: { course: string 
     const tags = tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : undefined;
 
     try {
+        if (!allowed.has(subject.toUpperCase())) {
+          setErr('Tham số không hợp lệ. Hãy chọn môn và năm hợp lệ từ trang Hub.');
+          setLoading(false);
+          return;
+        }
       const auth = getAuth();
       if (auth.currentUser?.uid) {
         if (sessionId) {
