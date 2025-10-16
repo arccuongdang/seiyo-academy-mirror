@@ -2,137 +2,50 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // =========================
-    // 0) Mặc định: CHẶN TẤT CẢ
-    // =========================
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // ===== Users self-scope =====
+    match /users/{uid} {
+      // The owner can read and write their own user document.
+      allow read, create, update: if signedIn() && request.auth.uid == uid;
+      allow delete: if false;
+
+      // Any subcollection under users/{uid} (e.g., attempts, wrongs, sessions, etc.)
+      match /{coll}/{docId} {
+        // The owner can read/write their own subcollection docs.
+        allow read, create, update: if signedIn() && request.auth.uid == uid;
+        allow delete: if false;
+      }
+    }
+
+    // ===== Courses =====
+    // Allow reading a course if public OR the user is a member: courses/{courseId}/members/{uid}
+    match /courses/{courseId} {
+      allow read: if signedIn() && (
+        resource.data.public == true ||
+        exists(/databases/$(database)/documents/courses/$(courseId)/members/$(request.auth.uid))
+      );
+      allow write: if false;
+
+      // Members subcollection: users can read their own membership doc (useful for UI)
+      match /members/{uid} {
+        allow read: if signedIn() && request.auth.uid == uid;
+        allow write: if false;
+      }
+    }
+
+    // ===== Optional top-level enrollments (if used) =====
+    // Keep this permissive for the owner to read their own enrollment rows.
+    match /enrollments/{enrId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // ===== Fallback: deny everything else =====
     match /{document=**} {
       allow read, write: if false;
-    }
-
-    // =========================
-    // 1) Helpers chung
-    // =========================
-    function isSignedIn() {
-      return request.auth != null && request.auth.uid != null;
-    }
-
-    function isOwner(uid) {
-      return isSignedIn() && uid == request.auth.uid;
-    }
-
-    // =========================
-    // 2) Validators — attempts
-    //    (/users/{uid}/attempts/{attemptId})
-    // =========================
-    // Quy ước dữ liệu (immutable):
-    // userId (== auth.uid), courseId, subjectId (string)
-    // examYear (int), total (int), correct (int), blank (int)
-    // score (number|int), durationSec? (int), createdAt? (timestamp)
-    // tags? (list), sessionId? (string|null)
-    function validAttemptData() {
-      return
-        (request.resource.data.userId == request.auth.uid)
-        && (request.resource.data.courseId is string)
-        && (request.resource.data.subjectId is string)
-        && (request.resource.data.examYear is int)
-        && (request.resource.data.total is int)
-        && (request.resource.data.correct is int)
-        && (request.resource.data.blank is int)
-        && ((request.resource.data.score is number) || (request.resource.data.score is int))
-
-        && ( !request.resource.data.keys().hasAll(['durationSec'])
-             || (request.resource.data.durationSec is int) )
-
-        && ( !request.resource.data.keys().hasAll(['createdAt'])
-             || (request.resource.data.createdAt is timestamp) )
-
-        && ( !request.resource.data.keys().hasAll(['tags'])
-             || (request.resource.data.tags is list) )
-
-        && ( !request.resource.data.keys().hasAll(['sessionId'])
-             || request.resource.data.sessionId == null
-             || (request.resource.data.sessionId is string) );
-    }
-
-    // =========================
-    // 3) Validators — attemptSessions
-    //    (/users/{uid}/attemptSessions/{sessionId})
-    // =========================
-    // Quy ước dữ liệu (mutable - lưu tiến độ):
-    // Base bắt buộc: userId==auth.uid, courseId, subjectId, sessionId (string),
-    // total/correct/blank (int).
-    // Tuỳ chọn: questionType ('TF'|'MCQ'|'MSQ'), options (list), correct (bool cho TF)
-    function validAttemptSessionBase() {
-      return
-        (request.resource.data.userId == request.auth.uid)
-        && (request.resource.data.courseId is string)
-        && (request.resource.data.subjectId is string)
-        && (request.resource.data.sessionId is string)
-        && (request.resource.data.total is int)
-        && (request.resource.data.correct is int)
-        && (request.resource.data.blank is int);
-    }
-
-    // Không kiểm tra “đếm số đáp án đúng” trong rules (tránh logic phức tạp),
-    // để FE/BE chịu trách nhiệm. Chỉ ràng buộc kiểu dữ liệu an toàn theo từng loại.
-    function validAttemptSession() {
-      // base phải hợp lệ
-      return validAttemptSessionBase()
-
-        // Nếu là TF: correct (nếu có) phải là bool; options (nếu có) là list
-        && (
-          !(request.resource.data.keys().hasAll(['questionType'])
-            && request.resource.data.questionType == 'TF')
-          || (
-              ( !request.resource.data.keys().hasAll(['correct'])
-                || (request.resource.data.correct is bool) )
-              && ( !request.resource.data.keys().hasAll(['options'])
-                   || (request.resource.data.options is list) )
-             )
-        )
-
-        // Nếu là MCQ hoặc MSQ: chỉ kiểm kiểu options nếu có (list)
-        && (
-          !(request.resource.data.keys().hasAll(['questionType'])
-            && (request.resource.data.questionType == 'MCQ' || request.resource.data.questionType == 'MSQ'))
-          || ( !request.resource.data.keys().hasAll(['options'])
-               || (request.resource.data.options is list) )
-        );
-    }
-
-    // =========================
-    // 4) Rules theo collection
-    // =========================
-
-    // 4.1) /users/{uid}/attempts/{attemptId}
-    match /users/{uid}/attempts/{attemptId} {
-      allow create: if isOwner(uid) && validAttemptData();
-      allow read:   if isOwner(uid);
-      allow update, delete: if false; // immutable
-    }
-
-    // 4.2) /users/{uid}/attemptSessions/{sessionId}
-    match /users/{uid}/attemptSessions/{sessionId} {
-      allow create, update: if isOwner(uid) && validAttemptSession();
-      allow read:           if isOwner(uid);
-      allow delete:         if false;
-    }
-
-    // 4.3) /users/{uid}/wrongs/{questionId}
-    // (Bước 11) Lưu câu sai để ôn lại
-    match /users/{uid}/wrongs/{questionId} {
-      allow create, update: if isOwner(uid)
-        && (request.resource.data.userId == request.auth.uid)
-        && (request.resource.data.courseId is string)
-        && (request.resource.data.subjectId is string)
-        && (request.resource.data.examYear is int)
-        && ( !request.resource.data.keys().hasAll(['count'])
-             || (request.resource.data.count is int) )
-        && ( !request.resource.data.keys().hasAll(['lastAt'])
-             || (request.resource.data.lastAt is timestamp) );
-
-      allow read:   if isOwner(uid);
-      allow delete: if false;
     }
   }
 }
