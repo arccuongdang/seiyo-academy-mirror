@@ -106,7 +106,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
 
   /* -------- Load RAW -------- */
   useEffect(() => {
-    if (!subject || !fixedYear) return;
+    if (!subject || !Number.isFinite(fixedYear)) return;
     setLoading(true);
     setErr(null);
     (async () => {
@@ -116,7 +116,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
           setLoading(false);
           return;
         }
-        const raws = await loadRawQuestionsForClient(course, subject);
+        const raws = await loadRawQuestionsForClient(course, subject.toUpperCase());
         setRawItems(Array.isArray(raws) ? raws : []);
         setLoading(false);
       } catch (e: any) {
