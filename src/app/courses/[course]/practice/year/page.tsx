@@ -85,6 +85,8 @@ export default function YearPracticePage({ params }: { params: { course: string 
   const fixedYear = Number(yearStr);
   const shuffleParam = search.get('shuffle') === '1';
 
+  const allowed = new Set(['TK','L','KC','TC']);
+
   const [rawItems, setRawItems] = useState<QuestionSnapshotItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -109,8 +111,13 @@ export default function YearPracticePage({ params }: { params: { course: string 
     setErr(null);
     (async () => {
       try {
+        if (!allowed.has(subject.toUpperCase()) || !Number.isFinite(fixedYear)) {
+          setErr('Tham số không hợp lệ. Hãy chọn môn và năm hợp lệ từ trang Hub.');
+          setLoading(false);
+          return;
+        }
         const raws = await loadRawQuestionsForClient(course, subject);
-        setRawItems(raws);
+        setRawItems(Array.isArray(raws) ? raws : []);
         setLoading(false);
       } catch (e: any) {
         setErr(e?.message || 'Lỗi tải dữ liệu');
@@ -121,10 +128,10 @@ export default function YearPracticePage({ params }: { params: { course: string 
 
   /* -------- Lọc đúng năm + format + tạo session -------- */
   useEffect(() => {
-    if (!rawItems.length || !fixedYear) return;
+    if (!Array.isArray(rawItems) || rawItems.length === 0 || !Number.isFinite(fixedYear)) return;
 
     const rows = rawItems.filter(q => Number(q.examYear) === fixedYear);
-    if (rows.length === 0) {
+    if (!rows || rows.length === 0) {
       setErr(`Chưa có câu hỏi cho ${subject} năm ${fixedYear}.`);
       setQuestions([]);
       return;

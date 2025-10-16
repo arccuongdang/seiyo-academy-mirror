@@ -50,7 +50,7 @@ function buildSubjectCounts(manifest: SnapshotManifest, courseId: string): Recor
 
 /** Lọc danh sách môn theo course từ subjects.json (client-safe, không phụ thuộc excel.ts) */
 function listSubjectsForCourseLocal(courseId: string, subjectsJson: SubjectsJSON): SubjectMeta[] {
-  const list = (subjectsJson?.items ?? []) as SubjectMeta[]
+  const list = (subjectsJson?.items ?? (subjectsJson as any)?.subjects ?? []) as SubjectMeta[]
   return list.filter((s) => s.courseId === courseId)
 }
 
