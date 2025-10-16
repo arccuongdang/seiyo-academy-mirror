@@ -4,17 +4,15 @@
  * ============================================================================
  * Year Practice — Luyện theo năm (mode=year)
  * ----------------------------------------------------------------------------
- * TÍNH NĂNG CHÍNH
- * - Đọc RAW snapshot theo course/subject, lọc đúng năm (?year=YYYY)
- * - Tuỳ chọn trộn đáp án (?shuffle=1)
- * - Multi-correct (MCQ có nhiều đáp án đúng):
- *   + Trước khi nộp: banner “Câu này có {X} đáp án đúng”
- *   + Khi chấm: nếu X>1, MỌI lựa chọn đều được tính ĐÚNG
- * - Ghi tiến độ & kết quả (Bước 10):
- *   + createAttemptSession khi build đề (nếu đã đăng nhập)
- *   + updateAttemptSession khi submitAll
- *   + finalizeAttempt tạo /users/{uid}/attempts (immutable)
- * - Có trang kết quả: lọc theo All/Wrong/Blank để review.
+ * Sửa ngày 2025-10-16
+ * 1) TS error: thiếu `mode` khi gọi createAttemptSession → thêm `mode: 'year'`
+ *    + (tùy chọn) truyền kèm `examYear: fixedYear` cho đầy đủ ngữ cảnh.
+ * 2) Đồng bộ chữ ký finalizeAttemptFromSession:
+ *    Trước đây gọi sai kiểu object. Nay dùng đúng: (sessionId, { score, tags })
+ * 3) Rà lại các lỗi đã gặp trong thread:
+ *    - Không dùng Firestore trực tiếp → không cần ensureDb().
+ *    - Chỉ dùng getAuth() + kiểm tra currentUser → an toàn SSR.
+ *    - Multi-correct giữ nguyên hành vi: nếu có >=2 đáp án đúng → mọi lựa chọn đều tính đúng.
  * ============================================================================
  */
 
@@ -26,10 +24,10 @@ import { loadRawQuestionsFor } from '../../../../../lib/qa/excel';
 import { toQARenderItemFromSnapshot } from '../../../../../lib/qa/formatters';
 
 // Attempts
-import { createAttemptSession, updateAttemptSession, finalizeAttempt } from '../../../../../lib/analytics/attempts';
+import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession } from '../../../../../lib/analytics/attempts';
 import { getAuth } from 'firebase/auth';
 
-// Nhap cau sai
+// Nhập câu sai
 import { bumpWrong } from '../../../../../lib/analytics/wrongs';
 
 import type { QuestionSnapshotItem, QARenderItem, QARenderOption } from '../../../../../lib/qa/schema';
@@ -164,6 +162,8 @@ export default function YearPracticePage({ params }: { params: { course: string 
           const { sessionId } = await createAttemptSession({
             courseId: course,
             subjectId: subject,
+            mode: 'year',           // ✅ thêm bắt buộc
+            examYear: fixedYear,    // (khuyến nghị) rõ ngữ cảnh năm
             total: view.length,
           });
           setSessionId(sessionId);
@@ -217,7 +217,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
     setFinished(true);
     setTab('all');
 
-    // 4) Cập nhật progress + finalize attempt (giữ nguyên phần cũ)
+    // 4) Cập nhật progress + finalize attempt
     const durationSec = startedAtMs ? Math.max(1, Math.round((Date.now() - startedAtMs) / 1000)) : undefined;
     const scoreNum = total ? Math.round((correct / total) * 100) : 0;
     const tagsParam = search.get('tags');
@@ -226,17 +226,11 @@ export default function YearPracticePage({ params }: { params: { course: string 
     try {
       const auth = getAuth();
       if (auth.currentUser?.uid) {
-        if (sessionId) await updateAttemptSession(sessionId, { correct, blank });
-        await finalizeAttempt({
-          courseId: course,
-          subjectId: subject,
-          examYear: fixedYear,
-          total, correct, blank,
-          score: scoreNum,
-          durationSec,
-          tags,
-          sessionId: sessionId ?? null,
-        });
+        if (sessionId) {
+          await updateAttemptSession(sessionId, { correct, blank });
+          // ✅ dùng đúng chữ ký finalizeAttemptFromSession(sessionId, extra)
+          await finalizeAttemptFromSession(sessionId, { score: scoreNum, tags });
+        }
       }
     } catch (e) {
       console.error('[attempts] finalize failed:', e);
@@ -291,9 +285,9 @@ export default function YearPracticePage({ params }: { params: { course: string 
 
         {/* Điều hướng */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <button onClick={() => goto(index - 1)} disabled={index === 0} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>前へ / Trước</button>
+          <button onClick={() => setIndex(i => Math.max(0, i - 1))} disabled={index === 0} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>前へ / Trước</button>
           <div>{index + 1} / {questions.length}</div>
-          <button onClick={() => goto(index + 1)} disabled={index === questions.length - 1} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>次へ / Tiếp</button>
+          <button onClick={() => setIndex(i => Math.min(questions.length - 1, i + 1))} disabled={index === questions.length - 1} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>次へ / Tiếp</button>
         </div>
 
         {/* Câu hỏi */}
@@ -331,7 +325,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
                   <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
                     <input
                       type="radio"
-                      name={`q-${q.id}`}
+                      name={'q-' + q.id}
                       checked={selectedThis}
                       onChange={() => onSelect(index, i)}
                       style={{ marginTop: 4 }}

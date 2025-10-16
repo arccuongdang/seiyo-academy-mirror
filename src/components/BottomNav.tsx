@@ -2,14 +2,21 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { auth } from '../lib/firebase/client';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { onAuthStateChanged, type User, type Auth } from 'firebase/auth';
+import { auth as _auth } from '../lib/firebase/client';
+
+/** Auth may be `null` during SSR/prerender. Guard it for TS & runtime safety. */
+function ensureAuth(): Auth | null {
+  return _auth ?? null;
+}
 
 export default function BottomNav() {
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => setUser(u));
+    const a = ensureAuth();
+    if (!a) return; // running on server or auth not ready -> skip subscription
+    const unsub = onAuthStateChanged(a, (u) => setUser(u));
     return () => unsub();
   }, []);
 

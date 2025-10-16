@@ -1,55 +1,31 @@
 'use client';
 
 /**
- * PATCH NOTES (Bước 13 – Replay wrongs)
- * - (NEW) Hỗ trợ ?questionIds=ID1,ID2,... để 'luyện lại câu sai' từ MyPage.
- * - Nếu có questionIds: bỏ qua 'years' & 'randomLast', chỉ nạp đúng các ID tìm thấy.
- * - Hiển thị shortage nếu một số ID không tồn tại trong snapshot.
- */
-
-
-/**
- * ============================================================================
  * Practice Start — Luyện theo môn (mode=subject)
- * ----------------------------------------------------------------------------
- * TÍNH NĂNG CHÍNH
- * - Đọc RAW snapshot theo course/subject, hỗ trợ các tham số query:
- *   + count: 5|10|15|20|25 (mặc định 10)
- *   + shuffle: 1|0 (trộn đáp án)
- *   + years: CSV năm (ưu tiên) hoặc randomLast=5|10 (chọn N năm gần nhất)
- * - Multi-correct (MCQ có nhiều đáp án đúng):
- *   + Trước khi nộp: hiển thị banner “Câu này có {X} đáp án đúng”
- *   + Khi chấm: nếu X>1, MỌI lựa chọn đều được tính ĐÚNG
- * - Ghi tiến độ & kết quả (Bước 10):
- *   + createAttemptSession khi bắt đầu nếu user đã đăng nhập
- *   + updateAttemptSession mỗi lần nộp câu (correct/blank)
- *   + finalizeAttempt khi bấm “Kết thúc & lưu kết quả”
- * - Không thay đổi tên biến/hàm hiện có ở các lib loader/formatter.
- * ============================================================================
+ * - Fixes 2025-10-16:
+ *   1) TS error: createAttemptSession missing required `mode` -> add `mode: 'subject'`.
+ *   2) Wrong call signature to finalizeAttemptFromSession -> now passes (sessionId, { score, tags }).
+ *   3) Rechecked prior issues in this thread: no direct Firestore usage here,
+ *      uses getAuth() only on client; page already 'use client'.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
-// Loaders & formatters (GIỮ nguyên đường dẫn lib của dự án)
 import { loadRawQuestionsFor } from '../../../../../lib/qa/excel';
 import { toQARenderItemFromSnapshot } from '../../../../../lib/qa/formatters';
 
-// Attempts (Bước 10)
-import { createAttemptSession, updateAttemptSession, finalizeAttempt } from '../../../../../lib/analytics/attempts';
+import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession } from '../../../../../lib/analytics/attempts';
 import { getAuth } from 'firebase/auth';
 
-// Nhap Cau sai (Bước 11)
 import { bumpWrong } from '../../../../../lib/analytics/wrongs';
 
-// Types
 import type {
   QuestionSnapshotItem,
   QARenderItem,
   QARenderOption,
 } from '../../../../../lib/qa/schema';
 
-/* -------------------- Utils chung -------------------- */
 function parseYearsCSV(v: string | null): number[] {
   if (!v) return [];
   return v.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isFinite(n));
@@ -68,7 +44,6 @@ function sampleN<T>(arr: T[], n: number): T[] {
   return shuffled(arr).slice(0, n);
 }
 
-/* -------------------- Grade helper -------------------- */
 function gradeByIndex(selectedIndex: number | null, options: QARenderOption[]) {
   const correct = options.map((o, i) => (o.isAnswer ? i : -1)).filter(i => i >= 0);
   return {
@@ -78,7 +53,6 @@ function gradeByIndex(selectedIndex: number | null, options: QARenderOption[]) {
   };
 }
 
-/* -------------------- View types -------------------- */
 type ViewQuestion = {
   id: string;
   examYear: number;
@@ -94,15 +68,12 @@ type ViewQuestion = {
   isCorrect?: boolean;
   correctShuffledIndexes?: number[];
   multiCorrect?: boolean;
-
-  // Số đáp án đúng thực tế (để banner + chế độ chấm)
   expectedMultiCount: number;
 };
 
 export default function PracticeStart({ params }: { params: { course: string } }) {
   const { course } = params;
   const sp = useSearchParams();
-
   const subject = sp.get('subject') || '';
 
   const countParam = parseInt(sp.get('count') || '', 10);
@@ -118,12 +89,11 @@ export default function PracticeStart({ params }: { params: { course: string } }
     ? (parseInt(randomLastParam, 10) as 5 | 10)
     : null;
 
-  const yearsFromCSV = parseYearsCSV(sp.get('years'));
+  const yearsFromCSV = useMemo(() => parseYearsCSV(sp.get('years')), [sp]);
   const explicitYears = yearsFromCSV.length ? yearsFromCSV : null;
 
-/* (NEW) Re-learn wrongs: accept ?questionIds=ID1,ID2,... */
-const qidsParam = sp.get('questionIds');
-const questionIds = qidsParam ? qidsParam.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const qidsParam = sp.get('questionIds');
+  const questionIds = qidsParam ? qidsParam.split(',').map(s => s.trim()).filter(Boolean) : [];
 
   const [rawItems, setRawItems] = useState<QuestionSnapshotItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -134,11 +104,9 @@ const questionIds = qidsParam ? qidsParam.split(',').map(s => s.trim()).filter(B
   const [started, setStarted] = useState(false);
   const [shortage, setShortage] = useState<{ requested: number; got: number } | null>(null);
 
-  // Attempts session info
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
 
-  /* ----------- Load RAW theo subject ----------- */
   useEffect(() => {
     if (!subject) return;
     setLoading(true);
@@ -155,7 +123,6 @@ const questionIds = qidsParam ? qidsParam.split(',').map(s => s.trim()).filter(B
     })();
   }, [course, subject]);
 
-  /* ----------- Danh sách năm có dữ liệu ----------- */
   const yearsDesc = useMemo(() => {
     const set = new Set<number>();
     for (const q of rawItems) {
@@ -165,11 +132,9 @@ const questionIds = qidsParam ? qidsParam.split(',').map(s => s.trim()).filter(B
     return Array.from(set).sort((a, b) => b - a);
   }, [rawItems]);
 
-  /* ----------- Bắt đầu phiên luyện ----------- */
   async function startSession() {
     if (!rawItems.length) return;
 
-    // 1) Select years ưu tiên theo query
     let targetYears: number[] = [];
     if (explicitYears) {
       const has = new Set(yearsDesc);
@@ -180,30 +145,25 @@ const questionIds = qidsParam ? qidsParam.split(',').map(s => s.trim()).filter(B
       targetYears = yearsDesc;
     }
 
-    // 2) Filter pool theo năm
     let pool = rawItems;
 
-// (NEW) If questionIds specified, restrict pool strictly to those IDs
-if (questionIds.length > 0) {
-  const want = new Set(questionIds);
-  const found = rawItems.filter(r => want.has((r as any).questionId || (r as any).id));
-  pool = found;
-
-  // Compute shortage for missing IDs
-  const foundIds = new Set(found.map(r => (r as any).questionId || (r as any).id));
-  const missing = questionIds.filter(id => !foundIds.has(id));
-  if (missing.length > 0) {
-    setShortage({ requested: questionIds.length, got: found.length });
-  } else {
-    setShortage(null);
-  }
-}
+    if (questionIds.length > 0) {
+      const want = new Set(questionIds);
+      const found = rawItems.filter(r => want.has((r as any).questionId || (r as any).id));
+      pool = found;
+      const foundIds = new Set(found.map(r => (r as any).questionId || (r as any).id));
+      const missing = questionIds.filter(id => !foundIds.has(id));
+      if (missing.length > 0) {
+        setShortage({ requested: questionIds.length, got: found.length });
+      } else {
+        setShortage(null);
+      }
+    }
     if (targetYears.length) {
       const allowed = new Set(targetYears);
-      pool = rawItems.filter(q => allowed.has(Number(q.examYear)));
+      pool = pool.filter(q => allowed.has(Number(q.examYear)));
     }
 
-    // 3) Sample câu
     let chosen: typeof pool;
     if (questionIds.length > 0) {
       chosen = [...pool];
@@ -217,14 +177,11 @@ if (questionIds.length > 0) {
       }
     }
 
-    // 4) Build view & expectedMultiCount (đếm số đáp án đúng)
     const view: ViewQuestion[] = chosen.map((raw) => {
       const ja = toQARenderItemFromSnapshot(raw, 'JA');
       const vi = toQARenderItemFromSnapshot(raw, 'VI');
       const order = shuffle ? shuffled(makePermutation(ja.options.length)) : makePermutation(ja.options.length);
-
       const expectedMultiCount = ja.options.filter(o => o.isAnswer).length;
-
       return {
         id: ja.id,
         examYear: ja.examYear,
@@ -244,14 +201,16 @@ if (questionIds.length > 0) {
     setStarted(true);
     setStartedAtMs(Date.now());
 
-    // 5) Attempts: tạo session nếu đã đăng nhập
     try {
       const auth = getAuth();
       if (auth.currentUser?.uid) {
+        // ✅ FIX: thiếu mode -> thêm mode: 'subject'
         const { sessionId } = await createAttemptSession({
           courseId: course,
           subjectId: subject,
+          mode: 'subject',
           total: view.length,
+          // examYear: undefined (subject-mode không cần)
         });
         setSessionId(sessionId);
       }
@@ -259,11 +218,9 @@ if (questionIds.length > 0) {
       console.warn('[attempts] create session failed:', e);
     }
 
-    // Cuộn lên đầu
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  /* ----------- Helpers UI ----------- */
   function goto(i: number) {
     setIndex(prev => Math.min(Math.max(i, 0), questions.length - 1));
   }
@@ -271,7 +228,6 @@ if (questionIds.length > 0) {
     setQuestions(prev => prev.map((q, i) => (i === qIdx ? { ...q, selectedIndex: shuffledIndex } : q)));
   }
 
-  /* ----------- Nộp 1 câu ----------- */
   function submitOne(qIdx: number) {
     setQuestions(prev =>
       prev.map((q, i) => {
@@ -289,7 +245,6 @@ if (questionIds.length > 0) {
           isCorrect: multi ? true : res.isCorrect,
         };
 
-        // ✅ Chỉ ghi wrong khi KHÔNG multi-correct và trả SAI
         if (!multi && next.isCorrect === false) {
           bumpWrong({
             questionId: q.id,
@@ -303,9 +258,8 @@ if (questionIds.length > 0) {
       }),
     );
 
-    // Sau khi state cập nhật, tính correct/blank và lưu progress
     setTimeout(() => {
-      const snapshot = (prevQuestions => prevQuestions)(questions); // closure capture
+      const snapshot = (prevQuestions => prevQuestions)(questions);
       const now = snapshot.map((q, i) => i === qIdx ? { ...q, submitted: true } : q);
       const correctCount = now.filter(x => x.submitted && (x.isCorrect === true)).length;
       const blankCount = now.filter(x => x.selectedIndex == null).length;
@@ -316,7 +270,6 @@ if (questionIds.length > 0) {
     }, 0);
   }
 
-  /* ----------- UI trạng thái ----------- */
   if (!subject) {
     return <main style={{ padding: 24 }}>Thiếu tham số <code>?subject=...</code>. Ví dụ: <code>?subject=TK</code></main>;
   }
@@ -324,7 +277,6 @@ if (questionIds.length > 0) {
   if (err) return <main style={{ padding: 24, color: 'crimson' }}>Lỗi: {err}</main>;
   if (!rawItems.length) return <main style={{ padding: 24 }}>Chưa có câu hỏi cho môn {subject}.</main>;
 
-  /* ----------- Màn hình “Bắt đầu” ----------- */
   if (!started) {
     const yearsText =
       explicitYears?.length ? explicitYears.join(', ')
@@ -355,7 +307,6 @@ if (questionIds.length > 0) {
     );
   }
 
-  /* ----------- Màn hình làm bài ----------- */
   const q = questions[index];
   const jaOpts = q.order.map(k => q.ja.options[k]);
   const viOpts = q.order.map(k => q.vi.options[k]);
@@ -367,28 +318,24 @@ if (questionIds.length > 0) {
         {course} / {subject} — Luyện theo môn
       </h1>
 
-      {/* Thiếu câu */}
       {shortage && (
         <div style={{ border: '1px solid #f59e0b', background: '#fffbeb', color: '#92400e', borderRadius: 8, padding: 10, marginBottom: 12 }}>
           Không đủ số câu bạn yêu cầu: đã chọn {shortage.requested}, nhưng chỉ có {shortage.got} câu phù hợp. Hệ thống sẽ dùng {shortage.got} câu hiện có.
         </div>
       )}
 
-      {/* Banner multi-correct */}
       {q.expectedMultiCount > 1 && !q.submitted && (
         <div style={{ border: '1px solid #60a5fa', background: '#eff6ff', color: '#1d4ed8', borderRadius: 8, padding: 10, marginBottom: 12 }}>
           Câu này có <b>{q.expectedMultiCount}</b> đáp án đúng
         </div>
       )}
 
-      {/* Điều hướng */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <button onClick={() => goto(index - 1)} disabled={index === 0} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>前へ / Trước</button>
         <div>{index + 1} / {questions.length}</div>
         <button onClick={() => goto(index + 1)} disabled={index === questions.length - 1} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>次へ / Tiếp</button>
       </div>
 
-      {/* Thân câu hỏi */}
       <div style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
         <div style={{ fontWeight: 600, marginBottom: 8 }}>
           問 {index + 1}: {q.ja.text || q.vi.text || '(No content)'}
@@ -432,7 +379,6 @@ if (questionIds.length > 0) {
           })}
         </ul>
 
-        {/* Nộp 1 câu */}
         {!q.submitted && (
           <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
@@ -443,10 +389,8 @@ if (questionIds.length > 0) {
               解答を提出 / Nộp câu
             </button>
 
-            {/* Nộp toàn bài & lưu attempts */}
             <button
               onClick={async () => {
-                // chấm mọi câu chưa nộp theo quy tắc multi-correct
                 const graded = questions.map(q => {
                   if (q.submitted) return q;
                   const optsInOrder = q.order.map(k => q.ja.options[k]);
@@ -462,14 +406,12 @@ if (questionIds.length > 0) {
                 });
                 setQuestions(graded);
 
-                // tính điểm
                 const total = graded.length;
                 const correct = graded.filter(x => x.isCorrect).length;
                 const blank = graded.filter(x => x.selectedIndex == null).length;
                 const durationSec = startedAtMs ? Math.max(1, Math.round((Date.now() - startedAtMs) / 1000)) : undefined;
                 const score = total ? Math.round((correct / total) * 100) : 0;
 
-                // tags từ URL nếu có
                 const tagsParam = sp.get('tags');
                 const tags = tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : undefined;
 
@@ -478,15 +420,9 @@ if (questionIds.length > 0) {
                   if (auth.currentUser?.uid) {
                     if (sessionId) {
                       await updateAttemptSession(sessionId, { correct, blank });
+                      // ✅ FIX: đúng chữ ký finalizeAttemptFromSession(sessionId, extra)
+                      await finalizeAttemptFromSession(sessionId, { score, tags });
                     }
-                    await finalizeAttempt({
-                      courseId: course,
-                      subjectId: subject,
-                      examYear: 0,
-                      total, correct, blank, score,
-                      durationSec, tags,
-                      sessionId: sessionId ?? null,
-                    });
                     alert('Đã lưu kết quả.');
                   } else {
                     alert('Chưa đăng nhập: kết quả chỉ xem tại chỗ, không lưu lên tài khoản.');

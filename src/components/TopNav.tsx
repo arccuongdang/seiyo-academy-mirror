@@ -1,22 +1,29 @@
 'use client';
 
-/** PATCH NOTES: add quick link to /mypage#wrongs to jump to replay section */
+/** PATCH NOTES: guard nullable Firebase Auth like BottomNav/ProfileGate */
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { auth } from '../lib/firebase/client';
-import { signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { auth as _auth } from '../lib/firebase/client';
+import { signOut, onAuthStateChanged, type User, type Auth } from 'firebase/auth';
 
 type Lang = 'JA' | 'VI';
 const LANG_STORAGE_KEY = 'seiyo:lang';
+
+// ---- Auth guard: our client lib exports `Auth | null` for SSR safety ----
+function ensureAuth(): Auth | null {
+  return _auth ?? null;
+}
 
 export default function TopNav() {
   const [user, setUser] = useState<User | null>(null);
   const [lang, setLang] = useState<Lang>('JA');
 
-  // Theo dõi trạng thái đăng nhập Firebase (GIỮ NGUYÊN)
+  // Theo dõi trạng thái đăng nhập Firebase (guard null)
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => setUser(u));
+    const a = ensureAuth();
+    if (!a) return; // running on server or auth not ready -> skip subscribe
+    const unsub = onAuthStateChanged(a, (u) => setUser(u));
     return () => unsub();
   }, []);
 
@@ -26,30 +33,19 @@ export default function TopNav() {
       const saved = (localStorage.getItem(LANG_STORAGE_KEY) || 'JA').toUpperCase();
       const initial = saved === 'VI' ? 'VI' : 'JA';
       setLang(initial as Lang);
-      // gắn data-lang giúp toàn site đọc nhanh nếu muốn
       document.documentElement.setAttribute('data-lang', initial);
     } catch {
       /* ignore */
     }
   }, []);
 
-  // Đổi ngôn ngữ: lưu localStorage + phát sự kiện toàn cục
+  // Đổi ngôn ngữ
   function changeLang(next: Lang) {
     if (next === lang) return;
     setLang(next);
-    try {
-      localStorage.setItem(LANG_STORAGE_KEY, next);
-    } catch {
-      /* ignore */
-    }
-    // set attribute cho CSS/JS khác
+    try { localStorage.setItem(LANG_STORAGE_KEY, next); } catch {}
     document.documentElement.setAttribute('data-lang', next);
-    // phát sự kiện để trang khác có thể subscribe (không bắt buộc phải dùng ngay)
-    try {
-      window.dispatchEvent(new CustomEvent('seiyo:lang-change', { detail: { lang: next } }));
-    } catch {
-      /* ignore */
-    }
+    try { window.dispatchEvent(new CustomEvent('seiyo:lang-change', { detail: { lang: next } })); } catch {}
   }
 
   return (
@@ -85,7 +81,7 @@ export default function TopNav() {
           Wrongs
         </Link>
 
-        {/* ===== Global JA/VI Toggle (mới) ===== */}
+        {/* ===== Global JA/VI Toggle ===== */}
         <div
           aria-label="Language toggle"
           role="group"
@@ -100,7 +96,7 @@ export default function TopNav() {
           <button
             onClick={() => changeLang('JA')}
             aria-pressed={lang === 'JA'}
-            title="日本語"
+            title='日本語'
             style={{
               padding: '4px 10px',
               background: lang === 'JA' ? '#1d4ed8' : 'transparent',
@@ -134,7 +130,7 @@ export default function TopNav() {
 
         {user ? (
           <button
-            onClick={() => signOut(auth)}
+            onClick={() => { const a = ensureAuth(); if (a) signOut(a); }}
             style={{
               background: 'transparent',
               color: '#fca5a5',

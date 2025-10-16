@@ -1,9 +1,24 @@
 'use client';
 
+export const dynamic = 'force-dynamic'; // don't prerender at build
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { db, requireUser, serverTimestamp } from '../../lib/firebase/client';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import {
+  doc, getDoc, setDoc, type Firestore
+} from 'firebase/firestore';
+import {
+  db as _db,
+  requireUser,
+  serverTimestamp
+} from '../../lib/firebase/client';
+
+// ---- Firestore guard (ép kiểu an toàn chỉ chạy ở client) ----
+function ensureDb(): Firestore {
+  if (!_db) {
+    throw new Error('Firestore is not available on this runtime. Ensure this page runs on client and Firebase env vars are set.');
+  }
+  return _db;
+}
 
 function OnboardingInner() {
   const router = useRouter();
@@ -21,25 +36,31 @@ function OnboardingInner() {
   const [gender, setGender] = useState('');
 
   useEffect(() => {
+    let mounted = true;
     (async () => {
       try {
-        const u = await requireUser(); // nếu chưa login -> throw
+        const u = await requireUser(); // nếu chưa login -> sẽ chờ cho đến khi có user
+        const db = ensureDb();
         const ref = doc(db, 'users', u.uid);
         const snap = await getDoc(ref);
-        if (snap.exists() && snap.data()?.profileComplete === true) {
+        if (!mounted) return;
+        if (snap.exists() && (snap.data() as any)?.profileComplete === true) {
           router.replace('/courses');
           return;
         }
       } catch (e: any) {
+        if (!mounted) return;
+        // Nếu chưa đăng nhập, chuyển hướng về /signin
         if (e?.message === 'AUTH_REQUIRED') {
           router.replace('/signin');
           return;
         }
         setErr(e?.message || 'Error');
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     })();
+    return () => { mounted = false; };
   }, [router]);
 
   const canSave = nickname.trim().length >= 2;
@@ -48,6 +69,7 @@ function OnboardingInner() {
     try {
       setSaving(true); setErr(null);
       const u = await requireUser();
+      const db = ensureDb();
       const ref = doc(db, 'users', u.uid);
       await setDoc(ref, {
         nickname: nickname.trim(),
