@@ -1,4 +1,8 @@
-'use client';
+
+'use client'
+
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
 /**
  * =============================================================================
@@ -13,36 +17,46 @@
  * =============================================================================
  */
 
-import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 
-// Loaders & utils theo phương án B
-import {
-  loadManifest,
-  loadSubjectsJson,
-  listSubjectsForCourse,
-} from '../../../../lib/qa/excel';
-import type { SnapshotManifest, SubjectsJSON } from '../../../../lib/qa/schema';
-import { formatJpEra } from '../../../../lib/qa/jpEra';
+import type { SnapshotManifest, SubjectsJSON, SubjectMeta } from '../../../../lib/qa/schema'
+import { formatJpEra } from '../../../../lib/qa/jpEra'
 
 /* =============================================================================
- * SECTION A. Small helpers
+ * SECTION A. Small helpers (client-safe)
  * ========================================================================== */
+
+async function safeFetchJson<T>(path: string): Promise<T | null> {
+  try {
+    const res = await fetch(path, { cache: 'no-store' })
+    if (!res.ok) return null
+    return (await res.json()) as T
+  } catch (_e) {
+    return null
+  }
+}
 
 /** Đếm số snapshot theo subject trong 1 course */
 function buildSubjectCounts(manifest: SnapshotManifest, courseId: string): Record<string, number> {
-  const counts: Record<string, number> = {};
+  const counts: Record<string, number> = {}
   for (const f of manifest.files ?? []) {
-    if (f.courseId !== courseId) continue;
-    counts[f.subjectId] = (counts[f.subjectId] ?? 0) + 1;
+    if ((f as any).courseId !== courseId) continue
+    const sid = (f as any).subjectId as string
+    counts[sid] = (counts[sid] ?? 0) + 1
   }
-  return counts;
+  return counts
 }
 
-/** Tạo danh sách năm để filter (tuỳ bạn điều chỉnh) */
+/** Lọc danh sách môn theo course từ subjects.json (client-safe, không phụ thuộc excel.ts) */
+function listSubjectsForCourseLocal(courseId: string, subjectsJson: SubjectsJSON): SubjectMeta[] {
+  const list = (subjectsJson?.items ?? []) as SubjectMeta[]
+  return list.filter((s) => s.courseId === courseId)
+}
+
+/** Tạo danh sách năm để filter (ví dụ 6 năm gần nhất) */
 function buildYearList(latest: number = new Date().getFullYear(), length = 6): number[] {
-  // ví dụ: 2025..2020 (6 năm gần nhất)
-  return Array.from({ length }, (_, i) => latest - i);
+  return Array.from({ length }, (_, i) => latest - i)
 }
 
 /* =============================================================================
@@ -50,39 +64,45 @@ function buildYearList(latest: number = new Date().getFullYear(), length = 6): n
  * ========================================================================== */
 
 export default function PracticeMenu({ params }: { params: { course: string } }) {
-  const { course } = params;
+  const { course } = params
 
-  const [subjectsJson, setSubjectsJson] = useState<SubjectsJSON | null>(null);
-  const [manifest, setManifest] = useState<SnapshotManifest | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [subjectsJson, setSubjectsJson] = useState<SubjectsJSON | null>(null)
+  const [manifest, setManifest] = useState<SnapshotManifest | null>(null)
+  const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const [m, s] = await Promise.all([loadManifest(), loadSubjectsJson()]);
-        if (!mounted) return;
-        setManifest(m);
-        setSubjectsJson(s);
-      } catch (e: any) {
-        if (!mounted) return;
-        setErr(e?.message || 'Không tải được dữ liệu');
+    let mounted = true
+    ;(async () => {
+      // Đọc trực tiếp từ /public/snapshots (client-safe)
+      const [m, s] = await Promise.all([
+        safeFetchJson<SnapshotManifest>('/snapshots/manifest.json'),
+        safeFetchJson<SubjectsJSON>('/snapshots/subjects.json'),
+      ])
+      if (!mounted) return
+      if (!m || !s) {
+        setErr('Không tải được dữ liệu từ snapshots.')
+        return
       }
-    })();
+      setManifest(m)
+      setSubjectsJson(s)
+    })().catch((e) => {
+      if (!mounted) return
+      setErr(e?.message || 'Không tải được dữ liệu')
+    })
     return () => {
-      mounted = false;
-    };
-  }, []);
+      mounted = false
+    }
+  }, [])
 
-  if (err) return <main className="p-8 text-red-600">Lỗi: {err}</main>;
-  if (!subjectsJson || !manifest) return <main className="p-8">Đang tải…</main>;
+  if (err) return <main className="p-8 text-red-600">Lỗi: {err}</main>
+  if (!subjectsJson || !manifest) return <main className="p-8">Đang tải…</main>
 
-  // Danh sách môn cho khoá hiện tại từ subjects.json
-  const subjects = useMemo(() => listSubjectsForCourse(course, subjectsJson), [course, subjectsJson]);
+  // Danh sách môn cho khoá hiện tại từ subjects.json (client-safe)
+  const subjects = useMemo(() => listSubjectsForCourseLocal(course, subjectsJson), [course, subjectsJson])
   // Số bản snapshot/subject từ manifest
-  const counts = useMemo(() => buildSubjectCounts(manifest, course), [manifest, course]);
+  const counts = useMemo(() => buildSubjectCounts(manifest, course), [manifest, course])
 
-  const yearList = buildYearList(); // ví dụ 6 năm gần nhất
+  const yearList = buildYearList() // ví dụ 6 năm gần nhất
 
   return (
     <main className="p-8 space-y-8">
@@ -90,7 +110,8 @@ export default function PracticeMenu({ params }: { params: { course: string } })
       <header className="space-y-1">
         <h1 className="text-2xl font-bold">Khóa {course} — Luyện tập</h1>
         <p className="text-sm text-gray-500">
-          Chọn theo <b>môn (分野別)</b> hoặc theo <b>năm (年度別)</b>. Dữ liệu lấy từ <code>snapshots/manifest.json</code> &amp; <code>snapshots/subjects.json</code>.
+          Chọn theo <b>môn (分野別)</b> hoặc theo <b>năm (年度別)</b>. Dữ liệu lấy từ <code>snapshots/manifest.json</code> &amp;{' '}
+          <code>snapshots/subjects.json</code>.
         </p>
       </header>
 
@@ -104,10 +125,10 @@ export default function PracticeMenu({ params }: { params: { course: string } })
         ) : (
           <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
             {subjects.map((s) => {
-              const count = counts[s.subjectId] ?? 0;
+              const count = counts[s.subjectId] ?? 0
               const subtitle =
                 (s.nameVI && s.nameVI.trim() !== '' ? s.nameVI : undefined) ||
-                (s.descriptionJA && s.descriptionJA.trim() !== '' ? s.descriptionJA : undefined);
+                (s.descriptionJA && s.descriptionJA.trim() !== '' ? s.descriptionJA : undefined)
 
               return (
                 <Link
@@ -115,13 +136,13 @@ export default function PracticeMenu({ params }: { params: { course: string } })
                   href={`/courses/${course}/practice/start?subject=${s.subjectId}`}
                   className="border rounded-lg p-4 bg-white shadow hover:shadow-lg transition"
                 >
-                  <div className="font-medium text-lg">{s.nameJA} <span className="text-gray-400">({s.subjectId})</span></div>
-                  {subtitle && <div className="text-sm text-gray-500 line-clamp-2">{subtitle}</div>}
-                  <div className="mt-2 text-xs text-gray-500">
-                    {count} phiên bản dữ liệu
+                  <div className="font-medium text-lg">
+                    {s.nameJA} <span className="text-gray-400">({s.subjectId})</span>
                   </div>
+                  {subtitle && <div className="text-sm text-gray-500 line-clamp-2">{subtitle}</div>}
+                  <div className="mt-2 text-xs text-gray-500">{count} phiên bản dữ liệu</div>
                 </Link>
-              );
+              )
             })}
           </div>
         )}
@@ -143,9 +164,10 @@ export default function PracticeMenu({ params }: { params: { course: string } })
           ))}
         </div>
         <p className="text-xs text-gray-500">
-          *Gợi ý: Trang <code>start</code> nên ưu tiên filter theo <code>?year=YYYY</code> nếu có, hoặc kết hợp cùng <code>subject</code>.
+          *Gợi ý: Trang <code>start</code> nên ưu tiên filter theo <code>?year=YYYY</code> nếu có, hoặc kết hợp cùng{' '}
+          <code>subject</code>.
         </p>
       </section>
     </main>
-  );
+  )
 }

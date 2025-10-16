@@ -301,3 +301,51 @@ export function byDifficulty(ds: Array<Difficulty | null> | Difficulty) {
   const set = new Set(Array.isArray(ds) ? ds : [ds]);
   return (q: QuestionSnapshotItem) => set.has((q.difficulty ?? null) as Difficulty | null);
 }
+
+
+/* =============================================================================
+ * Client-safe fetchers for snapshots
+ * ========================================================================== */
+export async function safeFetchJson<T>(path: string): Promise<T | null> {
+  try {
+    const res = await fetch(path, { cache: 'no-store' });
+    if (!res.ok) return null;
+    return await res.json() as T;
+  } catch (_e) {
+    return null;
+  }
+}
+
+
+/**
+ * Load latest snapshot for a given courseId + subjectId on the CLIENT.
+ * Requires /snapshots/manifest.json structure like:
+ * { files: [{ courseId, subjectId, path, version? }] }
+ */
+export async function loadRawQuestionsForClient(courseId: string, subjectId: string): Promise<QuestionSnapshotItem[]> {
+  type ManifestItem = { courseId: string; subjectId: string; path: string; version?: number } & Record<string, any>;
+  type Manifest = { files?: ManifestItem[] } & Record<string, any>;
+
+  const manifest = await safeFetchJson<Manifest>('/snapshots/manifest.json');
+  if (!manifest || !Array.isArray(manifest.files)) return [];
+
+  const items = manifest.files.filter(f => f.courseId === courseId && f.subjectId === subjectId);
+  if (!items.length) return [];
+
+  // pick latest by (version) or by timestamp parsed from filename
+  const pickLatest = (arr: ManifestItem[]): ManifestItem => {
+    const parseVer = (p: string, v?: number) => {
+      if (typeof v === 'number') return v;
+      const m = p.match(/\.v(\d+)\.json$/);
+      return m ? Number(m[1]) : 0;
+    };
+    return arr.reduce((a, b) => (parseVer(b.path, b.version) > parseVer(a.path, a.version) ? b : a));
+  };
+
+  const latest = pickLatest(items);
+  const path = latest.path?.startsWith('/') ? latest.path : `/snapshots/${latest.path}`;
+
+  const data = await safeFetchJson<QuestionSnapshotItem[]>(path);
+  return Array.isArray(data) ? data : [];
+}
+

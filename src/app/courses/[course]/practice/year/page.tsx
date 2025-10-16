@@ -1,5 +1,8 @@
 'use client';
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 /**
  * ============================================================================
  * Year Practice — Luyện theo năm (mode=year)
@@ -20,8 +23,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 // Loaders/formatters
-import { loadRawQuestionsFor } from '../../../../../lib/qa/excel';
-import { toQARenderItemFromSnapshot } from '../../../../../lib/qa/formatters';
+import { loadRawQuestionsForClient, toQARenderItemFromSnapshot } from '../../../../../lib/qa/formatters';
 
 // Attempts
 import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession } from '../../../../../lib/analytics/attempts';
@@ -107,7 +109,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
     setErr(null);
     (async () => {
       try {
-        const raws = await loadRawQuestionsFor(course, subject);
+        const raws = await loadRawQuestionsForClient(course, subject);
         setRawItems(raws);
         setLoading(false);
       } catch (e: any) {
