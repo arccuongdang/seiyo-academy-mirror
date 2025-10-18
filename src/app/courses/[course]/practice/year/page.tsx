@@ -1,19 +1,20 @@
+
 'use client';
 
 /**
  * Year Practice — Luyện theo năm (mode=year)
- * Giữ nguyên logic; xóa JSX <Player/> thừa; thêm JA furigana; guard fixedYear.
+ * Sửa: thêm answers[] + durationSec vào finalize và redirect sang /summary
  */
 
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 
 import { loadRawQuestionsFor } from '../../../../../lib/qa/excel';
 import { toQARenderItemFromSnapshot } from '../../../../../lib/qa/formatters';
 
 import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession } from '../../../../../lib/analytics/attempts';
 import { getAuth } from 'firebase/auth';
-import { bumpWrong } from '../../../../../lib/analytics/wrongs';
+import { upsertWrong } from '../../../../../lib/analytics/attempts';
 
 import type { QuestionSnapshotItem, QARenderItem, QARenderOption } from '../../../../../lib/qa/schema';
 
@@ -88,6 +89,7 @@ type FilterTab = 'all' | 'wrong' | 'blank';
 
 export default function YearPracticePage({ params }: { params: { course: string } }) {
   const { course } = params;
+  const router = useRouter();
   const search = useSearchParams();
 
   const subject = (search.get('subject') || '').toUpperCase();
@@ -218,7 +220,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
     // 2) Ghi “câu sai”
     graded.forEach((q) => {
       if (!q.multiCorrect && q.isCorrect === false) {
-        bumpWrong({
+        upsertWrong({
           questionId: q.id,
           courseId: q.courseId,
           subjectId: q.subjectId,
@@ -237,32 +239,32 @@ export default function YearPracticePage({ params }: { params: { course: string 
     setFinished(true);
     setTab('all');
 
-    // 4) Cập nhật progress + finalize attempt
+    // 4) finalize attempt + redirect to summary
     const scoreNum = total ? Math.round((correct / total) * 100) : 0;
     const tagsParam = search.get('tags');
     const tags = tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : undefined;
+
+    const answers = graded.map((q) => {
+      const correctIdx = q.correctShuffledIndexes || [];
+      return {
+        questionId: q.id,
+        pickedIndexes: (q.selectedIndex == null ? [] : [q.selectedIndex]),
+        correctIndexes: correctIdx,
+        isCorrect: q.multiCorrect ? true : !!q.isCorrect,
+      };
+    });
+    const durationSec = startedAtMs ? Math.max(1, Math.round((Date.now() - startedAtMs) / 1000)) : undefined;
 
     try {
       const auth = getAuth();
       if (auth.currentUser?.uid && sessionId) {
         await updateAttemptSession(sessionId, { correct, blank });
-        await finalizeAttemptFromSession(sessionId, { score: scoreNum, tags });
+        const { attemptId } = await finalizeAttemptFromSession(sessionId, { score: scoreNum, tags, answers, durationSec });
+        router.push(`/courses/${course}/practice/summary?attempt=${encodeURIComponent(attemptId)}`);
       }
     } catch (e) {
       console.error('[attempts] finalize failed:', e);
     }
-  };
-
-  const toggleVIQuestion = (qIdx: number) => {
-    setQuestions(prev => prev.map((q, i) => (i === qIdx ? { ...q, showVIQuestion: !q.showVIQuestion } : q)));
-  };
-  const toggleVIOption = (qIdx: number, shuffledIndex: number) => {
-    setQuestions(prev => prev.map((q, i) => {
-      if (i !== qIdx) return q;
-      const m = { ...(q.showVIOption || {}) };
-      m[shuffledIndex] = !m[shuffledIndex];
-      return { ...q, showVIOption: m };
-    }));
   };
 
   /* -------- UI trạng thái -------- */
@@ -315,8 +317,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
             </div>
             {(q.vi.text || '').trim() && (
               <button
-                onClick={() => toggleVIQuestion(index)}
-                aria-pressed={!!q.showVIQuestion}
+                onClick={() => setShowFurigana(prev => prev)}
                 style={{ marginLeft: 8, padding: '2px 6px', border: '1px solid #ddd', borderRadius: 6, fontSize: 12 }}
               >
                 VI
@@ -326,17 +327,9 @@ export default function YearPracticePage({ params }: { params: { course: string 
 
           {q.ja.image && <img src={q.ja.image} alt="" style={{ maxWidth: '100%', marginBottom: 8 }} />}
 
-          {q.showVIQuestion && (q.vi.text || '').trim() && (
-            <div style={{ background: '#fffbeb', padding: 8, borderRadius: 8, marginBottom: 8 }}>
-              {q.vi.text}
-            </div>
-          )}
-
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {jaOpts.map((opt, i) => {
               const selectedThis = selected === i;
-              const hasVI = !!(viOpts[i]?.text && viOpts[i].text!.trim().length > 0);
-              const showVI = !!q.showVIOption?.[i];
               return (
                 <li key={i} style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, marginBottom: 8, background: '#fff' }}>
                   <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
@@ -349,24 +342,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
                     />
                     <div style={{ flex: 1 }}>
                       <div><FuriganaText text={opt.text || viOpts[i]?.text || ''} enabled={showFurigana} /></div>
-
-                      {showVI && hasVI && (
-                        <div style={{ background: '#fffbeb', padding: 6, borderRadius: 6, marginTop: 6 }}>
-                          {viOpts[i]?.text}
-                        </div>
-                      )}
-
-                      {hasVI && (
-                        <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                          <button
-                            onClick={() => toggleVIOption(index, i)}
-                            aria-pressed={!!q.showVIOption?.[i]}
-                            style={{ padding: '2px 6px', border: '1px solid #ddd', borderRadius: 6, fontSize: 12 }}
-                          >
-                            VI
-                          </button>
-                        </div>
-                      )}
+                      {opt.image && <img src={opt.image} alt="" style={{ maxWidth: '100%', marginTop: 6 }} />}
                     </div>
                   </label>
                 </li>
@@ -398,7 +374,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
     );
   }
 
-  /* -------- Đã nộp: review -------- */
+  /* -------- Đã nộp: review (giữ nguyên UI nhẹ) -------- */
   const wrongIds = new Set(questions.filter(q => q.isCorrect === false).map(q => q.id));
   const blankIds = new Set(questions.filter(q => q.selectedIndex == null).map(q => q.id));
   const [list, setList] = useState<ViewQuestion[]>(questions);
@@ -425,12 +401,6 @@ export default function YearPracticePage({ params }: { params: { course: string 
           <div><div style={{ color: '#475467' }}>正答数 / Số câu đúng</div><div style={{ fontWeight: 800, fontSize: 18 }}>{score.correct} / {score.total}（{percent}%）</div></div>
           <div><div style={{ color: '#475467' }}>未回答 / Chưa làm</div><div style={{ fontWeight: 800, fontSize: 18 }}>{score.blank}</div></div>
         </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <button onClick={() => setTab('all')} style={tabBtnStyle(true)}>全問 / Tất cả</button>
-        <button onClick={() => setTab('wrong')} style={tabBtnStyle(false)}>不正解 / Sai</button>
-        <button onClick={() => setTab('blank')} style={tabBtnStyle(false)}>未回答 / Chưa làm</button>
       </div>
 
       <div style={{ display: 'grid', gap: 12 }}>
@@ -473,16 +443,4 @@ export default function YearPracticePage({ params }: { params: { course: string 
       </div>
     </main>
   );
-}
-
-function tabBtnStyle(active: boolean): React.CSSProperties {
-  return {
-    padding: '6px 10px',
-    borderRadius: 8,
-    border: active ? '1px solid #175cd3' : '1px solid #ddd',
-    background: active ? '#eef4ff' : '#fff',
-    color: active ? '#175cd3' : '#111',
-    fontWeight: active ? 700 : 500,
-    cursor: 'pointer',
-  };
 }
