@@ -26,7 +26,8 @@ import type {
  * - Build URL like:
  *   https://seiyo-academy.firebasestorage.app/o/images%2FKTS2%2F2023%2F000676_question.jpg?alt=media
  * ========================================================================== */
-const STORAGE_HOST = 'https://seiyo-academy.firebasestorage.app';
+const STORAGE_HOST = 'https://firebasestorage.googleapis.com/v0/b/seiyo-academy.firebasestorage.app';
+
 function buildPublicImageUrl(courseId: string, examYear: number, filename?: string | null): string | undefined {
   if (!filename) return undefined;
   const f = String(filename).trim();
