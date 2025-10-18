@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -27,7 +28,6 @@ type ViewQuestion = {
   showVIQuestion: boolean;
   showVIOption: Record<number, boolean>;
 };
-
 
 function shuffledIndices(n: number): number[] {
   const idx = Array.from({ length: n }, (_, i) => i);
@@ -77,7 +77,6 @@ function FuriganaText({ text, enabled }: { text?: string; enabled?: boolean }) {
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-
 export default function PracticeStartPage({ params }: { params: { course: string } }) {
   const { course } = params;
   const search = useSearchParams();
@@ -101,7 +100,6 @@ export default function PracticeStartPage({ params }: { params: { course: string
   const [showFurigana, setShowFurigana] = useState<boolean>(false); // default OFF
 
   const tags = useMemo(() => tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : undefined, [tagsParam]);
-
 
   useEffect(() => {
     if (!subject) return;
@@ -152,7 +150,6 @@ export default function PracticeStartPage({ params }: { params: { course: string
     })();
   }, [rawItems, randomizeOptions, subject, course, tagsParam]);
 
-
   const goto = (i: number) => setIndex(prev => Math.min(Math.max(i, 0), questions.length - 1));
   const onSelect = (qIdx: number, shuffledIndex: number) => {
     setQuestions(prev => prev.map((q, i) => (i === qIdx ? { ...q, selectedIndex: shuffledIndex } : q)));
@@ -184,7 +181,6 @@ export default function PracticeStartPage({ params }: { params: { course: string
     const total = graded.length;
     const correct = graded.filter(x => x.isCorrect).length;
     const blank = graded.filter(x => x.selectedIndex == null).length;
-    const scoreNum = total ? Math.round((correct / total) * 100) : 0;
 
     const answers = graded.map((q) => ({
       questionId: q.id,
@@ -204,14 +200,13 @@ export default function PracticeStartPage({ params }: { params: { course: string
         sid = created.sessionId; setSessionId(sid);
       }
       await updateAttemptSession(sid!, { correct, blank });
-      const { attemptId } = await finalizeAttemptFromSession(sid!, { score: scoreNum, tags, answers, durationSec });
+      const { attemptId } = await finalizeAttemptFromSession(sid!, { score: correct, tags, answers, durationSec });
       router.push(`/courses/${course}/practice/summary?attempt=${encodeURIComponent(attemptId)}`);
     } catch (e: any) {
       console.error('[attempts] finalize failed:', e);
       alert('Không thể lưu kết quả. Hãy kiểm tra đã đăng nhập và quyền Firestore (/users/*/attempts). Chi tiết: ' + (e?.message || ''));
     }
   };
-
 
   if (!subject) return <main style={{ padding: 24 }}>Thiếu tham số <code>?subject=...</code></main>;
   if (loading) return <main style={{ padding: 24 }}>Đang tải đề…</main>;
@@ -241,7 +236,7 @@ export default function PracticeStartPage({ params }: { params: { course: string
           else if (isBlank) { bg = '#f8fafc'; bd = '#cbd5e1'; }
           return (
             <button key={qq.id} onClick={() => goto(i)}
-              style={{ width: 34, height: 30, borderRadius: 6, border: `1px solid ${bd}`, background: bg, fontSize: 12, cursor: 'pointer' }}>
+              style={{ width: 34, height: 30, borderRadius: 6, border: '1px solid #e5e7eb', background: bg, fontSize: 12, cursor: 'pointer' }}>
               {i+1}
             </button>
           );
@@ -309,7 +304,8 @@ export default function PracticeStartPage({ params }: { params: { course: string
                         {q.showVIOption[i] && (viOpts[i]?.text || '').trim() && (
                           <div style={{ marginTop: 4, color:'#334155' }}>{viOpts[i]?.text}</div>
                         )}
-                        {opt.image && <img src={opt.image} alt="" style={{ maxWidth: '100%', marginTop: 6 }} />}
+                        {opt.image && <img src={opt.image} alt="" style={{ maxWidth: '100%', marginTop: 6 }} />
+                        }
                       </div>
                     </div>
                   </div>

@@ -24,7 +24,7 @@ export default function FilterPage() {
   const [pickedTags, setPickedTags] = useState<string[]>([])
   const [yearMode, setYearMode] = useState<'recent5'|'recent10'|'custom'|null>(null)
   const [customYears, setCustomYears] = useState<number[]>([])
-  const [shuffle, setShuffle] = useState(false) // default OFF
+  const [shuffle, setShuffle] = useState<boolean>(mode === 'year') // default ON for year, OFF for subject
 
   const subjectMeta = useMemo(() => {
     if (!subjectId) return null
@@ -80,11 +80,10 @@ export default function FilterPage() {
     }
     q.set('subject', selected)
     q.set('year', String(lockedYear))
-    if (shuffle) q.set('shuffle', '1')
+    q.set('shuffle', '1') // default ON silently for year mode
     location.assign(`/courses/${encodeURIComponent(courseId)}/practice/year?${q.toString()}`)
   }
 
-  // Title
   const title = mode === 'year' && lockedYear
     ? `出題_${lockedYear}年（${eraJP(lockedYear)}） / Bộ Lọc Đề_ Năm ${lockedYear} (${eraJP(lockedYear)})`
     : `出題 – ${courseJA} – ${subjectMeta?.nameJA || subjectId || ''} / Bộ lọc – ${courseId} – ${subjectMeta?.nameJA || subjectId || ''}`
@@ -103,6 +102,7 @@ export default function FilterPage() {
                 <span>{s.nameJA || s.subjectId}</span>
               </label>
             ))}
+            {!availableSubjects.length && <div className="text-gray-500">Chưa có môn cho năm này.</div>}
           </div>
         </section>
       )}
@@ -132,15 +132,15 @@ export default function FilterPage() {
         </section>
       )}
 
-      {/* Shuffle option (both modes) */}
-      <section className="border rounded-lg p-4">
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={shuffle} onChange={e=>setShuffle(e.target.checked)} />
-          <span>Trộn đáp án (Shuffle) — mặc định OFF</span>
-        </label>
-      </section>
+      {mode === 'subject' && (
+        <section className="border rounded-lg p-4">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={shuffle} onChange={e=>setShuffle(e.target.checked)} />
+            <span>Trộn đáp án (Shuffle) — mặc định OFF</span>
+          </label>
+        </section>
+      )}
 
-      {/* Bottom summary + Start */}
       <div style={{ display:'flex', gap:12, alignItems:'stretch' }}>
         <section className="border rounded-lg p-4" style={{ borderColor:'#175cd3', background:'#e8f1ff', flex:1 }}>
           <div className="font-bold mb-2" style={{ color:'#175cd3' }}>Tổng hợp lựa chọn</div>
@@ -149,7 +149,7 @@ export default function FilterPage() {
             {mode==='subject' && effectiveYears.length>0 && <li>Năm: {effectiveYears.join(', ')}</li>}
             {mode==='year' && lockedYear && <li>Năm: {lockedYear} ({eraJP(lockedYear)})</li>}
             {mode==='year' && <li>Môn: (hãy chọn 1 môn)</li>}
-            <li>Shuffle: {shuffle ? 'ON' : 'OFF'}</li>
+            {mode==='subject' && <li>Shuffle: {shuffle ? 'ON' : 'OFF'}</li>}
           </ul>
         </section>
         <div className="flex items-center">

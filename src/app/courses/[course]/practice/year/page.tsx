@@ -1,10 +1,11 @@
+
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { getAuth } from 'firebase/auth';
 
-import { loadRawQuestionsFor } from '../../../../../lib/qa/excel';
+import { loadRawQuestionsFor, loadSubjectsJson, findSubjectMeta, getCourseDisplayNameJA } from '../../../../../lib/qa/excel';
 import { toQARenderItemFromSnapshot } from '../../../../../lib/qa/formatters';
 import type { QuestionSnapshotItem, QARenderItem, QARenderOption } from '../../../../../lib/qa/schema';
 
@@ -28,15 +29,6 @@ type ViewQuestion = {
   showVIOption: Record<number, boolean>;
 };
 
-
-function shuffledIndices(n: number): number[] {
-  const idx = Array.from({ length: n }, (_, i) => i);
-  for (let i = n - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [idx[i], idx[j]] = [idx[j], idx[i]];
-  }
-  return idx;
-}
 function gradeSingleChoiceByIndex(selectedIndex: number | null, options: QARenderOption[]) {
   const correct = options.map((o, i) => (o.isAnswer ? i : -1)).filter(i => i >= 0);
   const multiCorrect = correct.length > 1;
@@ -77,14 +69,12 @@ function FuriganaText({ text, enabled }: { text?: string; enabled?: boolean }) {
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-
 export default function YearPracticePage({ params }: { params: { course: string } }) {
   const { course } = params;
   const search = useSearchParams();
   const router = useRouter();
 
   const subject = (search.get('subject') || '').toUpperCase();
-  const shuffleParam = search.get('shuffle') === '1';
   const tagsParam = search.get('tags');
   const fixedYear = Number(search.get('year') || '');
   const allowed = new Set(['TK','L','KC','TC']);
@@ -95,14 +85,14 @@ export default function YearPracticePage({ params }: { params: { course: string 
 
   const [questions, setQuestions] = useState<ViewQuestion[]>([]);
   const [index, setIndex] = useState(0);
-  const [randomizeOptions, setRandomizeOptions] = useState<boolean>(shuffleParam); // default OFF unless query on
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
   const [showFurigana, setShowFurigana] = useState<boolean>(false); // default OFF
 
-  const tags = useMemo(() => tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : undefined, [tagsParam]);
+  const [titleJA, setTitleJA] = useState<string>('');
 
+  const tags = useMemo(() => tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : undefined, [tagsParam]);
 
   useEffect(() => {
     if (!subject || !Number.isFinite(fixedYear)) return;
@@ -112,12 +102,18 @@ export default function YearPracticePage({ params }: { params: { course: string 
         if (!allowed.has(subject)) { setErr('Tham số không hợp lệ (subject).'); setLoading(false); return; }
         const raws = await loadRawQuestionsFor(course, subject);
         setRawItems(raws);
+        // build title JA with subject name + course name
+        const sj = await loadSubjectsJson();
+        const meta = findSubjectMeta(course, subject, sj);
+        const courseJA = getCourseDisplayNameJA(course, sj) || course;
+        const subjectJA = meta?.nameJA || subject;
+        setTitleJA(`${courseJA}　${subjectJA}　${fixedYear}年問題`);
         setLoading(false);
       } catch (e: any) {
         setErr(e?.message || 'Lỗi tải dữ liệu'); setLoading(false);
       }
     })();
-  }, [course, subject]);
+  }, [course, subject, fixedYear]);
 
   useEffect(() => {
     if (!rawItems.length) return;
@@ -127,7 +123,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
     const view: ViewQuestion[] = rows.map(raw => {
       const ja = toQARenderItemFromSnapshot(raw, 'JA');
       const vi = toQARenderItemFromSnapshot(raw, 'VI');
-      const order = randomizeOptions ? shuffledIndices(ja.options.length) : Array.from({ length: ja.options.length }, (_, i) => i);
+      const order = Array.from({ length: ja.options.length }, (_, i) => i); // NO SHUFFLE in year mode
       const expectedMultiCount = ja.options.filter(o => o.isAnswer).length;
       return {
         id: ja.id, examYear: ja.examYear, courseId: ja.courseId, subjectId: ja.subjectId,
@@ -151,8 +147,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
         }
       } catch (e) { console.warn('[attempts] create session failed:', e); }
     })();
-  }, [rawItems, randomizeOptions, subject, course, tagsParam]);
-
+  }, [rawItems, subject, course, tagsParam, fixedYear]);
 
   const goto = (i: number) => setIndex(prev => Math.min(Math.max(i, 0), questions.length - 1));
   const onSelect = (qIdx: number, shuffledIndex: number) => {
@@ -185,7 +180,6 @@ export default function YearPracticePage({ params }: { params: { course: string 
     const total = graded.length;
     const correct = graded.filter(x => x.isCorrect).length;
     const blank = graded.filter(x => x.selectedIndex == null).length;
-    const scoreNum = total ? Math.round((correct / total) * 100) : 0;
 
     const answers = graded.map((q) => ({
       questionId: q.id,
@@ -205,14 +199,14 @@ export default function YearPracticePage({ params }: { params: { course: string 
         sid = created.sessionId; setSessionId(sid);
       }
       await updateAttemptSession(sid!, { correct, blank });
-      const { attemptId } = await finalizeAttemptFromSession(sid!, { score: scoreNum, tags, answers, durationSec });
+      // IMPORTANT: score = correct count (not percentage)
+      const { attemptId } = await finalizeAttemptFromSession(sid!, { score: correct, tags, answers, durationSec });
       router.push(`/courses/${course}/practice/summary?attempt=${encodeURIComponent(attemptId)}`);
     } catch (e: any) {
       console.error('[attempts] finalize failed:', e);
       alert('Không thể lưu kết quả. Hãy kiểm tra đã đăng nhập và quyền Firestore (/users/*/attempts). Chi tiết: ' + (e?.message || ''));
     }
   };
-
 
   if (!subject || !Number.isFinite(fixedYear)) return <main style={{ padding: 24 }}>Thiếu tham số <code>?subject=...</code></main>;
   if (loading) return <main style={{ padding: 24 }}>Đang tải đề…</main>;
@@ -228,7 +222,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
   return (
     <main style={{ padding: 24, maxWidth: 1000, margin: '0 auto' }}>
       <h1 style={{ fontSize: 20, fontWeight: 800, marginBottom: 12 }}>
-        {course} / {subject} — 年度 過去問
+        {titleJA}
       </h1>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 12px' }}>
@@ -263,10 +257,6 @@ export default function YearPracticePage({ params }: { params: { course: string 
         <label style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <input type="checkbox" checked={showFurigana} onChange={e => setShowFurigana(e.target.checked)} />
           ふりがな
-        </label>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginLeft: 12 }}>
-          <input type="checkbox" checked={randomizeOptions} onChange={(e) => setRandomizeOptions(e.target.checked)} />
-          Trộn đáp án
         </label>
       </div>
 
@@ -310,7 +300,8 @@ export default function YearPracticePage({ params }: { params: { course: string 
                         {q.showVIOption[i] && (viOpts[i]?.text || '').trim() && (
                           <div style={{ marginTop: 4, color:'#334155' }}>{viOpts[i]?.text}</div>
                         )}
-                        {opt.image && <img src={opt.image} alt="" style={{ maxWidth: '100%', marginTop: 6 }} />}
+                        {opt.image && <img src={opt.image} alt="" style={{ maxWidth: '100%', marginTop: 6 }} />
+                        }
                       </div>
                     </div>
                   </div>
