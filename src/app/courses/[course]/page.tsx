@@ -1,3 +1,4 @@
+
 'use client'
 
 import Link from 'next/link'
@@ -10,19 +11,31 @@ export default function CourseHubPage() {
   const courseId = decodeURIComponent(String(params?.course || ''))
   const [years, setYears] = useState<number[]>([])
   const [courseJA, setCourseJA] = useState<string>(courseId)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     (async () => {
-      const sj = await loadSubjectsJson()
-      const ys = await listAvailableYearsForCourse(courseId, sj)
-      setYears(ys)
-      setCourseJA(getCourseDisplayNameJA(courseId, sj) || courseId)
+      try {
+        const sj = await loadSubjectsJson()
+        const ys = await listAvailableYearsForCourse(courseId, sj)
+        setYears(ys)
+        setCourseJA(getCourseDisplayNameJA(courseId, sj) || courseId)
+      } catch (e: any) {
+        console.error('[course hub] load failed:', e)
+        setError('Không tải được /snapshots/subjects.json.')
+      }
     })()
   }, [courseId])
 
   return (
     <main style={{ padding: 24, maxWidth: 980, margin: '0 auto', display: 'grid', gap: 16 }}>
       <h1 style={{ fontSize: 22, fontWeight: 800 }}>Khóa {courseJA} / {courseId}</h1>
+
+      {error && (
+        <div className="border rounded-lg p-3 bg-yellow-50 border-yellow-300 text-yellow-900">
+          {error} ・ Thử mở trực tiếp: <a href="/snapshots/subjects.json" className="underline text-blue-700">/snapshots/subjects.json</a>
+        </div>
+      )}
 
       <section className="border rounded-lg p-4">
         <div className="font-bold mb-2">Luyện theo năm</div>
@@ -32,6 +45,7 @@ export default function CourseHubPage() {
               {y} ({eraJP(y)})
             </Link>
           ))}
+          {!years.length && <div className="text-gray-500">Chưa có dữ liệu năm.</div>}
         </div>
       </section>
 
