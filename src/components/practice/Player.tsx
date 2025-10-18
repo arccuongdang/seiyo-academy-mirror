@@ -1,7 +1,7 @@
 
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import BilingualText from '../BilingualText'
 import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession } from '../../lib/analytics/attempts'
 import { getAuth } from 'firebase/auth'
@@ -44,7 +44,11 @@ export default function Player({ course, mode, questions, examYear }: PlayerProp
   const [score, setScore] = useState({ total: 0, correct: 0, blank: 0 })
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [lang, setLang] = useState<'JA' | 'VI'>('JA')
-  const [showFurigana, setShowFurigana] = useState<boolean>(true)
+  // Default OFF as requested
+  const [showFurigana, setShowFurigana] = useState<boolean>(false)
+  const [startedAtMs, setStartedAtMs] = useState<number | null>(null)
+
+  useEffect(() => { setStartedAtMs(Date.now()) }, [])
 
   useMemo(() => {
     ;(async () => {
@@ -97,11 +101,24 @@ export default function Player({ course, mode, questions, examYear }: PlayerProp
     setScore({ total, correct, blank })
     setFinished(true)
 
+    // Build answers[] in SHUFFLED index space + duration
+    const answers = graded.map(it => ({
+      questionId: it.id,
+      pickedIndexes: (it.selectedIndex == null ? [] : [it.selectedIndex]),
+      correctIndexes: it.correctShuffledIndexes || [],
+      isCorrect: it.multiCorrect ? true : !!it.isCorrect,
+    }))
+    const durationSec = startedAtMs ? Math.max(1, Math.round((Date.now() - startedAtMs) / 1000)) : undefined
+
     try {
       const auth = getAuth()
       if (auth.currentUser?.uid && sessionId) {
         await updateAttemptSession(sessionId, { correct, blank })
-        await finalizeAttemptFromSession(sessionId, { score: total ? Math.round((correct / total) * 100) : 0 })
+        await finalizeAttemptFromSession(sessionId, {
+          score: total ? Math.round((correct / total) * 100) : 0,
+          answers,
+          durationSec,
+        })
       }
     } catch (e) {
       console.warn('[attempts] finalize failed:', e)

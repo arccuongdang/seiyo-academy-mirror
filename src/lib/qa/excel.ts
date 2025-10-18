@@ -1,29 +1,17 @@
+
 /**
- * =============================================================================
- *  Snapshots loader & helpers (Plan B)
- *  - FE: đọc public/snapshots/manifest.json và subjects.json
- *  - Chọn snapshot mới nhất cho (courseId, subjectId)
- *  - Helpers: listYearsForSubject / listSubjectsForYear / listAvailableYearsForCourse
- *  - Admin: parser TagsList từ Excel (NEW)
- * =============================================================================
+ * Snapshots loader & helpers (Plan B) — revised helpers
+ * - Adds: findSubjectMeta (already exported in your copy), and
+ *         getCourseDisplayNameJA() placeholder to wire Japanese course label later
  */
 
 import type {
   SnapshotManifest,
   SubjectsJSON,
   QuestionSnapshotItem,
-  TagsIndex,  // NEW
-  TagDef,     // NEW
+  TagsIndex,
+  TagDef,
 } from './schema';
-
-/* =================== Thin types & caches =================== */
-
-type ThinManifestFileEntry = {
-  courseId: string;
-  subjectId: string;
-  path: string;
-  version?: number;
-};
 
 export type ThinSubjectsItem = {
   courseId: string;
@@ -46,8 +34,6 @@ async function fetchJSON<T = any>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-/* =================== Loaders =================== */
-
 export async function loadManifest(): Promise<SnapshotManifest> {
   if (manifestCache.value) return manifestCache.value;
   const data = await fetchJSON<SnapshotManifest>(`${SNAPSHOT_BASE}/manifest.json`);
@@ -61,8 +47,6 @@ export async function loadSubjectsJson(): Promise<SubjectsJSON> {
   subjectsCache.value = data;
   return data;
 }
-
-/* =================== Subjects helpers =================== */
 
 export function listSubjectsForCourse(courseId: string, subjectsJson: SubjectsJSON): ThinSubjectsItem[] {
   const items = (subjectsJson.items || []).filter((it: any) => it.courseId === courseId);
@@ -103,7 +87,30 @@ export function findSubjectMeta(
     : null;
 }
 
-/* =================== Snapshot selection & RAW loader =================== */
+/** Placeholder: Japanese name of course (will use Course sheet later) */
+export function getCourseDisplayNameJA(courseId: string, subjectsJson?: SubjectsJSON | null): string | null {
+  // If subjects.json already contains a course-level map, read it here.
+  // For now, return null so callers can fallback to the raw courseId.
+  try {
+    const anyS: any = subjectsJson || subjectsCache.value;
+    const list = anyS?.courses || anyS?.items || [];
+    // Try to find an entry that has courseId + nameJA (course-level)
+    if (Array.isArray(list)) {
+      const hit = list.find((x: any) => x?.courseId === courseId && typeof x?.nameJA === 'string' && x.nameJA.trim());
+      if (hit) return String(hit.nameJA).trim();
+    }
+  } catch {}
+  return null;
+}
+
+/* Snapshot selection & RAW loader */
+
+type ThinManifestFileEntry = {
+  courseId: string;
+  subjectId: string;
+  path: string;
+  version?: number;
+};
 
 function collectFilesFor(courseId: string, subjectId: string, manifest: SnapshotManifest): ThinManifestFileEntry[] {
   const files = (manifest.files || []) as any[];
@@ -127,10 +134,7 @@ export function selectLatestFile(
   return files[0];
 }
 
-export async function loadRawQuestionsFor(
-  courseId: string,
-  subjectId: string
-): Promise<QuestionSnapshotItem[]> {
+export async function loadRawQuestionsFor(courseId: string, subjectId: string): Promise<QuestionSnapshotItem[]> {
   const cacheKey = `${courseId}:${subjectId}`;
   if (rawCache.has(cacheKey)) return rawCache.get(cacheKey)!;
 
@@ -152,12 +156,7 @@ export async function loadRawQuestionsFor(
   return arr;
 }
 
-/* =================== Years & subjects availability =================== */
-
-export async function listYearsForSubject(
-  courseId: string,
-  subjectId: string
-): Promise<number[]> {
+export async function listYearsForSubject(courseId: string, subjectId: string): Promise<number[]> {
   const raws = await loadRawQuestionsFor(courseId, subjectId);
   const set = new Set<number>();
   for (const q of raws) {
@@ -167,11 +166,7 @@ export async function listYearsForSubject(
   return Array.from(set).sort((a, b) => b - a);
 }
 
-export async function listSubjectsForYear(
-  courseId: string,
-  year: number,
-  subjectsJson?: SubjectsJSON
-): Promise<ThinSubjectsItem[]> {
+export async function listSubjectsForYear(courseId: string, year: number, subjectsJson?: SubjectsJSON): Promise<ThinSubjectsItem[]> {
   const sj = subjectsJson ?? (await loadSubjectsJson());
   const subjects = listSubjectsForCourse(courseId, sj);
   const result: ThinSubjectsItem[] = [];
@@ -182,10 +177,7 @@ export async function listSubjectsForYear(
   return result;
 }
 
-export async function listAvailableYearsForCourse(
-  courseId: string,
-  subjectsJson?: SubjectsJSON
-): Promise<number[]> {
+export async function listAvailableYearsForCourse(courseId: string, subjectsJson?: SubjectsJSON): Promise<number[]> {
   const sj = subjectsJson ?? (await loadSubjectsJson());
   const subjects = listSubjectsForCourse(courseId, sj);
   const set = new Set<number>();
@@ -196,19 +188,12 @@ export async function listAvailableYearsForCourse(
   return Array.from(set).sort((a, b) => b - a);
 }
 
-/* =================== Convenience =================== */
-
-export function pickLastYears(allYears: number[], n: 5 | 10): number[] {
-  if (!allYears?.length) return [];
-  return allYears.slice(0, n);
-}
-
-/* =================== (NEW) TagsList parser for Admin Publish =================== */
-/* Layout: cột “No” + từng cặp cột JA / JV(hoặc VI) cho mỗi (courseId, subjectId)
- * id = {subjectId}-{No}
- */
+/* TagsIndex helpers for Admin */
 
 import * as XLSX from 'xlsx';
+
+export type TagDefLocal = TagDef;
+export type TagsIndexLocal = TagsIndex;
 
 export function buildTagsIndexFromSheet(ws: XLSX.WorkSheet): TagsIndex {
   const rows = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' }) as string[][];
@@ -222,11 +207,10 @@ export function buildTagsIndexFromSheet(ws: XLSX.WorkSheet): TagsIndex {
     const subject = (rows[1]?.[j] || '').trim();
     const lang = (rows[2]?.[j] || '').trim().toUpperCase();
     if (!course || !subject) continue;
-    if (subject.toLowerCase() === 'no') continue; // bỏ cột "No"
+    if (subject.toLowerCase() === 'no') continue; // skip column "No"
     cols.push({ course, subject, lang, j });
   }
 
-  // group theo (course, subject) thành cặp JA + VI/JV
   const groups = new Map<string, { ja?: Col; vi?: Col }>();
   for (const c of cols) {
     const key = `${c.course}__${c.subject}`;
@@ -241,11 +225,11 @@ export function buildTagsIndexFromSheet(ws: XLSX.WorkSheet): TagsIndex {
     const [courseId, subjectId] = key.split('__');
     out[courseId] ??= {};
     const arr: TagDef[] = [];
-    for (let i = 3; i < H; i++) { // từ hàng 4 (index 3)
+    for (let i = 3; i < H; i++) { // from row 4 (index 3)
       const nameJA = g.ja ? (rows[i]?.[g.ja.j] || '').trim() : '';
       const nameVI = g.vi ? (rows[i]?.[g.vi.j] || '').trim() : '';
       if (!nameJA && !nameVI) continue;
-      const id = `${subjectId}-${i - 3}`; // id = {subjectId}-{No}
+      const id = `${subjectId}-${i - 3}`;
       arr.push({ id, nameJA, nameVI: nameVI || undefined });
     }
     out[courseId][subjectId] = arr;
@@ -258,13 +242,7 @@ export function parseTagsIndexFromWorkbook(wb: XLSX.WorkBook): TagsIndex {
   return ws ? buildTagsIndexFromSheet(ws) : {};
 }
 
-/* =================== (NEW) Helper cho Filter (tuỳ chọn dùng) =================== */
-
-export function pickTagIdsFromIndex(
-  tagsIndex: TagsIndex | null | undefined,
-  courseId: string,
-  subjectId: string
-): string[] {
+export function pickTagIdsFromIndex(tagsIndex: TagsIndex | null | undefined, courseId: string, subjectId: string): string[] {
   const arr = tagsIndex?.[courseId]?.[subjectId];
   if (!Array.isArray(arr)) return [];
   return arr.map(t => String(t.id)).filter(Boolean);

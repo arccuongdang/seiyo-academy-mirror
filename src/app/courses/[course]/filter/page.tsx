@@ -1,14 +1,16 @@
+
 'use client';
 
 /**
- * /courses/[course]/filter
- * - GIỮ NGUYÊN: mode subject/year; gọi FilterForm; điều hướng start/year
- * - BỔ SUNG: ƯU TIÊN dùng manifest.tagsIndex để liệt kê Tags (Union)
- *            Fallback: quét snapshot latest (giữ logic cũ)
- * - Difficulty A/AA/AAA vẫn giữ như trước (nếu bạn đã bật UI ở FilterForm)
+ * /courses/[course]/filter  — Revised
+ * - Title shows: "Bộ lọc – {courseId} – {subjectNameJA}" when subject is locked
+ * - Removed "BOX MÔN" (no extra subject box here; use locked subject)
+ * - Added "BOX tổng hợp lựa chọn" (live summary) near the Start area
+ * - Uses TagsIndex from manifest if available; fallback scans latest snapshot
+ * - Default toggles (Furigana/Shuffle) are not set here; Start page handles default OFF
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useParams, useRouter } from 'next/navigation';
 import FilterForm from '../../../../components/FilterForm';
 
@@ -17,6 +19,7 @@ import {
   loadSubjectsJson,
   listYearsForSubject,
   listSubjectsForYear,
+  findSubjectMeta,
 } from '../../../../lib/qa/excel';
 
 type ManifestIndex = {
@@ -33,7 +36,6 @@ type SnapshotAny = {
   questions?: any[];
 };
 
-// ===== helper =====
 async function fetchJson<T = any>(url: string): Promise<T> {
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Fetch failed: ${url}`);
@@ -75,23 +77,27 @@ export default function FilterPage() {
   const search = useSearchParams();
 
   const courseId = decodeURIComponent(String(params?.course || ''));
-  const lockedSubjectId = search.get('subject');
-  const lockedYearStr = search.get('year');
+  const lockedSubjectId = search.get('subject') || undefined;
+  const lockedYearStr = search.get('year') || undefined;
   const mode: 'subject' | 'year' = lockedSubjectId ? 'subject' : lockedYearStr ? 'year' : 'subject';
-  const lockedYear = lockedYearStr ? Number(lockedYearStr) : null;
+  const lockedYear = lockedYearStr ? Number(lockedYearStr) : undefined;
 
   const [manifest, setManifest] = useState<any | null>(null);
   const [subjectsJson, setSubjectsJson] = useState<any | null>(null);
   const [availableYears, setAvailableYears] = useState<number[]>([]);
-  const [availableSubjects, setAvailableSubjects] = useState<{ subjectId: string; nameJA?: string; nameVI?: string }[]>(
-    []
-  );
+  const [availableSubjects, setAvailableSubjects] = useState<{ subjectId: string; nameJA?: string; nameVI?: string }[]>([]);
 
-  // Tags (Union)
+  // Tags & Diffs
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [pickedTags, setPickedTags] = useState<string[]>([]);
   const [availableDiffs, setAvailableDiffs] = useState<string[]>([]);
   const [pickedDiffs, setPickedDiffs] = useState<string[]>([]);
+
+  // Subject meta for JA title
+  const subjectMeta = useMemo(() => {
+    if (!lockedSubjectId) return null;
+    return findSubjectMeta(courseId, lockedSubjectId, subjectsJson) as { nameJA?: string } | null;
+  }, [courseId, lockedSubjectId, subjectsJson]);
 
   useEffect(() => {
     (async () => {
@@ -104,14 +110,14 @@ export default function FilterPage() {
           const years = await listYearsForSubject(courseId, lockedSubjectId);
           setAvailableYears(years || []);
 
-          // NEW: ưu tiên manifest.tagsIndex nếu có
+          // TagsIndex ưu tiên
           const idx = m?.tagsIndex?.[courseId]?.[lockedSubjectId];
           if (Array.isArray(idx)) {
             const ids = idx.map((t: any) => String(t.id)).filter(Boolean);
             setAvailableTags(ids);
             setPickedTags((prev) => prev.filter((x) => ids.includes(x)));
           } else {
-            // Fallback: quét snapshot latest
+            // Fallback scan
             const latestPath = resolveLatestSnapshotPath(m, courseId, lockedSubjectId);
             if (latestPath) {
               const snap = await fetchJson<SnapshotAny>(`/snapshots/${latestPath}`);
@@ -170,15 +176,28 @@ export default function FilterPage() {
     router.push(`/courses/${encodeURIComponent(courseId)}/practice/year?${q.toString()}`);
   }
 
+  // ===== Summary box content (live) =====
+  const summaryLines: string[] = [];
+  if (mode === 'subject') {
+    if (lockedSubjectId) summaryLines.push(`Môn: ${subjectMeta?.nameJA || lockedSubjectId}`);
+    if (availableYears.length) summaryLines.push(`Năm có dữ liệu: ${availableYears.join(', ')}`);
+    if (pickedTags.length) summaryLines.push(`Tags: ${pickedTags.join(', ')}`);
+    if (pickedDiffs.length) summaryLines.push(`Độ khó: ${pickedDiffs.join(', ')}`);
+  } else {
+    if (lockedYear) summaryLines.push(`Năm: ${lockedYear}`);
+    if (availableSubjects.length) summaryLines.push(`Môn: ${availableSubjects.map(s => s.nameJA || s.subjectId).join(', ')}`);
+  }
+
   return (
     <main style={{ padding: 24, maxWidth: 960, margin: '0 auto', display: 'grid', gap: 16 }}>
       <h1 style={{ fontSize: 22, fontWeight: 800 }}>
-        Bộ lọc – {courseId} {mode === 'subject' ? `(theo môn)` : `(theo năm)`}
+        {/* Title per requirement: "Bộ lọc – KTS2 -構造" when subject mode & locked */}
+        Bộ lọc – {courseId}{mode === 'subject' && lockedSubjectId ? ` – ${subjectMeta?.nameJA || lockedSubjectId}` : ''} {mode === 'subject' ? '' : ''}
       </h1>
 
       {mode === 'subject' && (
         <>
-          {/* Union Tags */}
+          {/* Tags (Union) */}
           {availableTags.length > 0 && (
             <section style={box}>
               <div style={boxTitle}>Tags (Union)</div>
@@ -226,7 +245,17 @@ export default function FilterPage() {
         </>
       )}
 
-      {/* Form chính giữ nguyên */}
+      {/* BOX tổng hợp lựa chọn (đặt ngay trên FilterForm, cạnh nút Bắt đầu về mặt thị giác) */}
+      {summaryLines.length > 0 && (
+        <section style={{ ...box, borderColor: '#175cd3', background: '#f0f6ff' }}>
+          <div style={{ ...boxTitle, color: '#175cd3' }}>Tổng hợp lựa chọn</div>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {summaryLines.map((t, i) => (<li key={i}>{t}</li>))}
+          </ul>
+        </section>
+      )}
+
+      {/* Form chính (giữ nguyên API) */}
       <FilterForm
         mode={mode}
         courseId={courseId}

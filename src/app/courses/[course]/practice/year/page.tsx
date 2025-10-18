@@ -1,27 +1,34 @@
-
 'use client';
 
-/**
- * Year Practice (mode=year)
- * Features:
- *  - VI toggles (per-question + per-option)
- *  - Submit-one-question (instant check)
- *  - Navigator grid
- *  - Robust finalize
- */
-
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { getAuth } from 'firebase/auth';
 
 import { loadRawQuestionsFor } from '../../../../../lib/qa/excel';
 import { toQARenderItemFromSnapshot } from '../../../../../lib/qa/formatters';
-
-import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession, upsertWrong } from '../../../../../lib/analytics/attempts';
-import { getAuth } from 'firebase/auth';
-
 import type { QuestionSnapshotItem, QARenderItem, QARenderOption } from '../../../../../lib/qa/schema';
 
-/* Helpers */
+import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession, upsertWrong } from '../../../../../lib/analytics/attempts';
+
+type ViewQuestion = {
+  id: string;
+  courseId: string;
+  subjectId: string;
+  examYear: number;
+  ja: QARenderItem;
+  vi: QARenderItem;
+  order: number[];
+  selectedIndex: number | null;
+  submitted: boolean;
+  isCorrect?: boolean;
+  correctShuffledIndexes?: number[];
+  multiCorrect?: boolean;
+  expectedMultiCount: number;
+  showVIQuestion: boolean;
+  showVIOption: Record<number, boolean>;
+};
+
+
 function shuffledIndices(n: number): number[] {
   const idx = Array.from({ length: n }, (_, i) => i);
   for (let i = n - 1; i > 0; i--) {
@@ -42,7 +49,8 @@ function escapeHtml(s: string) {
 function VIChip({ active, onClick }: { active: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} title="Hiển thị/ẩn bản dịch tiếng Việt"
-      style={{ padding: '2px 6px', borderRadius: 6, fontSize: 12, border: '1px solid #ddd', background: active ? '#f1f5f9' : '#fff', color: '#111827' }}
+      style={{ padding: '2px 6px', borderRadius: 6, fontSize: 12, border: '1px solid #ddd',
+               background: active ? '#f1f5f9' : '#fff', color: '#111827' }}
     >VI</button>
   );
 }
@@ -69,40 +77,16 @@ function FuriganaText({ text, enabled }: { text?: string; enabled?: boolean }) {
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-/* View types */
-type ViewQuestion = {
-  id: string;
-  examYear: number;
-  courseId: string;
-  subjectId: string;
-
-  ja: QARenderItem;
-  vi: QARenderItem;
-
-  order: number[];
-  selectedIndex: number | null;
-  submitted: boolean;
-
-  isCorrect?: boolean;
-  correctShuffledIndexes?: number[];
-  multiCorrect?: boolean;
-
-  showVIQuestion: boolean;
-  showVIOption: Record<number, boolean>;
-
-  expectedMultiCount: number;
-};
 
 export default function YearPracticePage({ params }: { params: { course: string } }) {
   const { course } = params;
-  const router = useRouter();
   const search = useSearchParams();
+  const router = useRouter();
 
   const subject = (search.get('subject') || '').toUpperCase();
-  const yearStr = search.get('year') || '';
-  const fixedYear = Number(yearStr);
   const shuffleParam = search.get('shuffle') === '1';
-
+  const tagsParam = search.get('tags');
+  const fixedYear = Number(search.get('year') || '');
   const allowed = new Set(['TK','L','KC','TC']);
 
   const [rawItems, setRawItems] = useState<QuestionSnapshotItem[]>([]);
@@ -111,33 +95,34 @@ export default function YearPracticePage({ params }: { params: { course: string 
 
   const [questions, setQuestions] = useState<ViewQuestion[]>([]);
   const [index, setIndex] = useState(0);
-  const [randomizeOptions, setRandomizeOptions] = useState<boolean>(shuffleParam);
+  const [randomizeOptions, setRandomizeOptions] = useState<boolean>(shuffleParam); // default OFF unless query on
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
+  const [showFurigana, setShowFurigana] = useState<boolean>(false); // default OFF
 
-  const [showFurigana, setShowFurigana] = useState<boolean>(true);
+  const tags = useMemo(() => tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : undefined, [tagsParam]);
 
-  /* Load RAW */
+
   useEffect(() => {
     if (!subject || !Number.isFinite(fixedYear)) return;
     setLoading(true); setErr(null);
     (async () => {
       try {
-        if (!allowed.has(subject)) { setErr('Tham số không hợp lệ.'); setLoading(false); return; }
+        if (!allowed.has(subject)) { setErr('Tham số không hợp lệ (subject).'); setLoading(false); return; }
         const raws = await loadRawQuestionsFor(course, subject);
         setRawItems(raws);
         setLoading(false);
-      } catch (e: any) { setErr(e?.message || 'Lỗi tải dữ liệu'); setLoading(false); }
+      } catch (e: any) {
+        setErr(e?.message || 'Lỗi tải dữ liệu'); setLoading(false);
+      }
     })();
-  }, [course, subject, fixedYear]);
+  }, [course, subject]);
 
-  /* Filter year + format + create session */
   useEffect(() => {
-    if (!rawItems.length || !Number.isFinite(fixedYear)) return;
-
-    const rows = rawItems.filter(q => Number(q.examYear) === fixedYear);
-    if (rows.length === 0) { setErr(`Chưa có câu hỏi cho ${subject} năm ${fixedYear}.`); setQuestions([]); return; }
+    if (!rawItems.length) return;
+    const rows = rawItems.filter(q => Number(q.examYear) === fixedYear && (!tags || tags.some(tag => String(q.tags||'').includes(tag))));
+    if (rows.length === 0) { setErr('Không có câu hỏi phù hợp filter.'); setQuestions([]); return; }
 
     const view: ViewQuestion[] = rows.map(raw => {
       const ja = toQARenderItemFromSnapshot(raw, 'JA');
@@ -166,14 +151,14 @@ export default function YearPracticePage({ params }: { params: { course: string 
         }
       } catch (e) { console.warn('[attempts] create session failed:', e); }
     })();
-  }, [rawItems, fixedYear, randomizeOptions, subject, course]);
+  }, [rawItems, randomizeOptions, subject, course, tagsParam]);
+
 
   const goto = (i: number) => setIndex(prev => Math.min(Math.max(i, 0), questions.length - 1));
   const onSelect = (qIdx: number, shuffledIndex: number) => {
     setQuestions(prev => prev.map((q, i) => (i === qIdx ? { ...q, selectedIndex: shuffledIndex } : q)));
   };
 
-  /* Submit one */
   const submitOne = (qIdx: number) => {
     setQuestions(prev => prev.map((q, i) => {
       if (i !== qIdx) return q;
@@ -188,7 +173,6 @@ export default function YearPracticePage({ params }: { params: { course: string 
     }));
   };
 
-  /* Submit all */
   const submitAll = async () => {
     const graded = questions.map((q) => {
       const optsInOrder = q.order.map(k => q.ja.options[k]);
@@ -210,7 +194,6 @@ export default function YearPracticePage({ params }: { params: { course: string 
       isCorrect: q.multiCorrect ? true : !!q.isCorrect,
     }));
     const durationSec = startedAtMs ? Math.max(1, Math.round((Date.now() - startedAtMs) / 1000)) : undefined;
-    const tagsParam = search.get('tags');
     const tags = tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : undefined;
 
     try {
@@ -218,26 +201,25 @@ export default function YearPracticePage({ params }: { params: { course: string 
       if (!auth.currentUser?.uid) { alert('Bạn chưa đăng nhập. Hãy đăng nhập để lưu kết quả.'); return; }
       let sid = sessionId;
       if (!sid) {
-        const created = await createAttemptSession({ courseId: course, subjectId: subject, mode: 'year', examYear: fixedYear, total });
+        const created = await createAttemptSession({ courseId: course, subjectId: subject, mode: 'subject', total });
         sid = created.sessionId; setSessionId(sid);
       }
       await updateAttemptSession(sid!, { correct, blank });
       const { attemptId } = await finalizeAttemptFromSession(sid!, { score: scoreNum, tags, answers, durationSec });
       router.push(`/courses/${course}/practice/summary?attempt=${encodeURIComponent(attemptId)}`);
     } catch (e: any) {
-      console.error('[attempts] finalize failed:', e?.message || e);
-      alert('Không thể lưu kết quả. Hãy kiểm tra đã đăng nhập và quyền Firestore (/users/*/attempts).');
+      console.error('[attempts] finalize failed:', e);
+      alert('Không thể lưu kết quả. Hãy kiểm tra đã đăng nhập và quyền Firestore (/users/*/attempts). Chi tiết: ' + (e?.message || ''));
     }
   };
 
-  /* UI */
-  if (!subject || !Number.isFinite(fixedYear)) return <main style={{ padding: 24 }}>Thiếu tham số <code>?subject=...</code> và/hoặc <code>?year=...</code></main>;
+
+  if (!subject || !Number.isFinite(fixedYear)) return <main style={{ padding: 24 }}>Thiếu tham số <code>?subject=...</code></main>;
   if (loading) return <main style={{ padding: 24 }}>Đang tải đề…</main>;
   if (err) return <main style={{ padding: 24, color: 'crimson' }}>Lỗi: {err}</main>;
+  if (!questions.length) return <main style={{ padding: 24 }}>Chưa có câu hỏi.</main>;
 
   const q = questions[index];
-  if (!q) return <main style={{ padding: 24 }}>Chưa có câu hỏi.</main>;
-
   const jaOpts = q.order.map(k => q.ja.options[k]);
   const viOpts = q.order.map(k => q.vi.options[k]);
   const selected = q.selectedIndex;
@@ -246,17 +228,16 @@ export default function YearPracticePage({ params }: { params: { course: string 
   return (
     <main style={{ padding: 24, maxWidth: 1000, margin: '0 auto' }}>
       <h1 style={{ fontSize: 20, fontWeight: 800, marginBottom: 12 }}>
-        {course} / {subject} — {fixedYear} 年度 過去問
+        {course} / {subject} — 年度 過去問
       </h1>
 
-      {/* Navigator grid */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 12px' }}>
         {questions.map((qq, i) => {
           const isBlank = qq.selectedIndex == null;
           const isWrong = qq.submitted && qq.isCorrect === false;
-          const isCorrectFlag = qq.submitted && qq.isCorrect === true;
+          const isCorrect = qq.submitted && qq.isCorrect === true;
           let bg = '#fff', bd = '#e5e7eb';
-          if (isCorrectFlag) { bg = '#ecfdf3'; bd = '#10b981'; }
+          if (isCorrect) { bg = '#ecfdf3'; bd = '#10b981'; }
           else if (isWrong) { bg = '#fef2f2'; bd = '#ef4444'; }
           else if (isBlank) { bg = '#f8fafc'; bd = '#cbd5e1'; }
           return (
@@ -283,10 +264,13 @@ export default function YearPracticePage({ params }: { params: { course: string 
           <input type="checkbox" checked={showFurigana} onChange={e => setShowFurigana(e.target.checked)} />
           ふりがな
         </label>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginLeft: 12 }}>
+          <input type="checkbox" checked={randomizeOptions} onChange={(e) => setRandomizeOptions(e.target.checked)} />
+          Trộn đáp án
+        </label>
       </div>
 
       <div style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
-        {/* Question text + VI toggle */}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
           <div style={{ fontWeight: 600 }}>
             問 {index + 1}: <FuriganaText text={q.ja.text || ''} enabled={showFurigana} />
@@ -303,29 +287,32 @@ export default function YearPracticePage({ params }: { params: { course: string 
           {jaOpts.map((opt, i) => {
             const selectedThis = selected === i;
             const isCorrect = q.submitted ? (q.multiCorrect === true || correctSet.has(i)) : false;
+            const originalNo = q.order[i] + 1;
             return (
-              <li key={i} style={{
-                border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, marginBottom: 8,
-                background: q.submitted ? (isCorrect ? '#ecfdf3' : (selectedThis ? '#fef2f2' : '#fff')) : '#fff'
-              }}>
+              <li key={i} style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, marginBottom: 8,
+                                    background: q.submitted ? (isCorrect ? '#ecfdf3' : (selectedThis ? '#fef2f2' : '#fff')) : '#fff' }}>
                 <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
                   <input type="radio" name={'q-' + q.id} checked={selectedThis} onChange={() => onSelect(index, i)} style={{ marginTop: 4 }} />
                   <div style={{ flex: 1 }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                      <FuriganaText text={opt.text || ''} enabled={showFurigana} />
-                      {(viOpts[i]?.text || '').trim() && (
-                        <VIChip active={!!q.showVIOption[i]} onClick={() => setQuestions(prev => prev.map((qq, idx) => {
-                          if (idx !== index) return qq;
-                          const next = { ...qq.showVIOption };
-                          next[i] = !next[i];
-                          return { ...qq, showVIOption: next };
-                        }))} />
-                      )}
+                    <div style={{ display:'flex', alignItems:'flex-start', gap:8 }}>
+                      <div style={{ width: 22, textAlign: 'right', paddingTop: 2 }}>{originalNo}.</div>
+                      <div style={{ flex: 1 }}>
+                        <FuriganaText text={opt.text || ''} enabled={showFurigana} />
+                        {(viOpts[i]?.text || '').trim() && (
+                          <div style={{ display:'inline-block', marginLeft: 8 }}>
+                            <VIChip active={!!q.showVIOption[i]} onClick={() => setQuestions(prev => prev.map((qq, idx) => {
+                              if (idx !== index) return qq;
+                              const next = { ...qq.showVIOption }; next[i] = !next[i];
+                              return { ...qq, showVIOption: next };
+                            }))} />
+                          </div>
+                        )}
+                        {q.showVIOption[i] && (viOpts[i]?.text || '').trim() && (
+                          <div style={{ marginTop: 4, color:'#334155' }}>{viOpts[i]?.text}</div>
+                        )}
+                        {opt.image && <img src={opt.image} alt="" style={{ maxWidth: '100%', marginTop: 6 }} />}
+                      </div>
                     </div>
-                    {q.showVIOption[i] && (viOpts[i]?.text || '').trim() && (
-                      <div style={{ marginTop: 4, color:'#334155' }}>{viOpts[i]?.text}</div>
-                    )}
-                    {opt.image && <img src={opt.image} alt="" style={{ maxWidth: '100%', marginTop: 6 }} />}
                   </div>
                 </label>
               </li>
@@ -338,13 +325,8 @@ export default function YearPracticePage({ params }: { params: { course: string 
             この問題を提出 / Nộp câu này
           </button>
           <button onClick={submitAll} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #175cd3', background: '#175cd3', color: '#fff', fontWeight: 700 }}>
-            全問を提出 / Nộp toàn bài
+            終了して保存 / Kết thúc & lưu kết quả
           </button>
-
-          <label style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <input type="checkbox" checked={randomizeOptions} onChange={(e) => setRandomizeOptions(e.target.checked)} />
-            Trộn đáp án
-          </label>
         </div>
       </div>
     </main>
