@@ -1,11 +1,11 @@
 
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import BilingualText from '../BilingualText'
 import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession } from '../../lib/analytics/attempts'
-import { getAuth } from 'firebase/auth'
 import type { QARenderItem } from '../../lib/qa/schema'
+import { getAuth } from 'firebase/auth'
 
 type ViewQuestion = {
   id: string
@@ -23,6 +23,7 @@ type PlayerProps = {
   mode: 'year' | 'subject'
   questions: ViewQuestion[]
   examYear?: number
+  allowShuffle?: boolean // set by query ?shuffle=1
 }
 
 type LocalQuestion = ViewQuestion & {
@@ -31,51 +32,66 @@ type LocalQuestion = ViewQuestion & {
   isCorrect?: boolean
   correctShuffledIndexes?: number[]
   multiCorrect?: boolean
-  showVIQuestion?: boolean
-  showVIOption?: Record<number, boolean>
+  showExplain?: boolean
+  guessed?: boolean
 }
 
-export default function Player({ course, mode, questions, examYear }: PlayerProps) {
+function shuffleArray<T>(arr: T[]): T[] {
+  const a = arr.slice()
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
+export default function Player({ course, mode, questions, examYear, allowShuffle }: PlayerProps) {
   const [items, setItems] = useState<LocalQuestion[]>(() =>
-    questions.map(q => ({ ...q, selectedIndex: null, submitted: false, showVIQuestion: false, showVIOption: {} }))
+    questions.map(q => ({ ...q, selectedIndex: null, submitted: false, showExplain: false, guessed: false }))
   )
   const [idx, setIdx] = useState(0)
   const [finished, setFinished] = useState(false)
   const [score, setScore] = useState({ total: 0, correct: 0, blank: 0 })
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [lang, setLang] = useState<'JA' | 'VI'>('JA')
-  // Default OFF as requested
   const [showFurigana, setShowFurigana] = useState<boolean>(false)
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null)
+  const [globalShuffleEnabled] = useState<boolean>(!!allowShuffle)
 
-  useEffect(() => { setStartedAtMs(Date.now()) }, [])
+  // session start time
+  useEffect(() => {
+    setStartedAtMs(Date.now())
+  }, [])
 
-  useMemo(() => {
-    ;(async () => {
+  // create attempt session
+  useEffect(() => {
+    (async () => {
       try {
         const first = questions[0]
         const auth = getAuth()
         if (auth.currentUser?.uid && first) {
-          const { sessionId } = await createAttemptSession({
+          const res = await createAttemptSession({
             courseId: first.courseId || course,
             subjectId: first.subjectId,
             mode,
             examYear: mode === 'year' ? (examYear ?? first.examYear) : undefined,
             total: questions.length,
           })
-          setSessionId(sessionId)
+          setSessionId(res.sessionId)
         }
       } catch (e) {
         console.warn('[attempts] create session failed:', e)
       }
     })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const q = items[idx]
-  const jaOpts = q ? q.order.map(k => q.ja.options[k]) : []
-  const viOpts = q ? q.order.map(k => q.vi.options[k]) : []
+  const jaOpts = useMemo(() => (q ? q.order.map(k => q.ja.options[k]) : []), [q])
+  const viOpts = useMemo(() => (q ? q.order.map(k => q.vi.options[k]) : []), [q])
 
   const onSelect = (i: number) => {
+    if (!q || q.submitted) return
     setItems(prev => prev.map((x, j) => (j === idx ? { ...x, selectedIndex: i } : x)))
   }
 
@@ -86,27 +102,63 @@ export default function Player({ course, mode, questions, examYear }: PlayerProp
     return { isCorrect, correctIndexes: correct, multiCorrect }
   }
 
+  function reshuffleCurrent() {
+    if (!q) return
+    if (!globalShuffleEnabled) return
+    if (q.submitted) return // rule: cannot shuffle after submitted
+    setItems(prev => prev.map((x, j) => {
+      if (j !== idx) return x
+      const shuffled = shuffleArray(x.order)
+      // reset selection to avoid mismap
+      return { ...x, order: shuffled, selectedIndex: null }
+    }))
+  }
+
+  function submitOne(guessed: boolean = false) {
+    if (!q || q.submitted) return
+    const optsInOrder = q.order.map(k => q.ja.options[k])
+    const res = gradeSingleChoiceByIndex(q.selectedIndex, optsInOrder)
+    const multi = res.multiCorrect || q.expectedMultiCount > 1
+    setItems(prev => prev.map((x, j) => (j === idx
+      ? {
+          ...x,
+          submitted: true,
+          isCorrect: multi ? true : res.isCorrect,
+          correctShuffledIndexes: res.correctIndexes,
+          multiCorrect: multi,
+          guessed: !!guessed,
+        }
+      : x)))
+  }
+
+  function toggleExplain() {
+    if (!q || !q.submitted) return
+    setItems(prev => prev.map((x, j) => (j === idx ? { ...x, showExplain: !x.showExplain } : x)))
+  }
+
   const submitAll = async () => {
-    const graded = items.map((q) => {
-      const optsInOrder = q.order.map(k => q.ja.options[k])
-      const res = gradeSingleChoiceByIndex(q.selectedIndex, optsInOrder)
-      const multi = res.multiCorrect || q.expectedMultiCount > 1
-      return { ...q, submitted: true, isCorrect: multi ? true : res.isCorrect, correctShuffledIndexes: res.correctIndexes, multiCorrect: multi }
+    const graded = items.map((it) => {
+      if (it.submitted) return it
+      const options = it.order.map(k => it.ja.options[k])
+      const res = gradeSingleChoiceByIndex(it.selectedIndex, options)
+      const multi = res.multiCorrect || it.expectedMultiCount > 1
+      return { ...it, submitted: true, isCorrect: multi ? true : res.isCorrect, correctShuffledIndexes: res.correctIndexes, multiCorrect: multi }
     })
 
-    const total = graded.length
+    // score rule: only correct count (do not count wrong/blank)
     const correct = graded.filter(x => x.isCorrect).length
     const blank = graded.filter(x => x.selectedIndex == null).length
+    const total = graded.length
     setItems(graded)
     setScore({ total, correct, blank })
     setFinished(true)
 
-    // Build answers[] in SHUFFLED index space + duration
     const answers = graded.map(it => ({
       questionId: it.id,
       pickedIndexes: (it.selectedIndex == null ? [] : [it.selectedIndex]),
       correctIndexes: it.correctShuffledIndexes || [],
       isCorrect: it.multiCorrect ? true : !!it.isCorrect,
+      guessed: !!it.guessed,
     }))
     const durationSec = startedAtMs ? Math.max(1, Math.round((Date.now() - startedAtMs) / 1000)) : undefined
 
@@ -115,7 +167,7 @@ export default function Player({ course, mode, questions, examYear }: PlayerProp
       if (auth.currentUser?.uid && sessionId) {
         await updateAttemptSession(sessionId, { correct, blank })
         await finalizeAttemptFromSession(sessionId, {
-          score: total ? Math.round((correct / total) * 100) : 0,
+          score: correct,
           answers,
           durationSec,
         })
@@ -131,10 +183,10 @@ export default function Player({ course, mode, questions, examYear }: PlayerProp
     const percent = score.total ? Math.round((score.correct / score.total) * 100) : 0
     return (
       <div className="space-y-4">
-        <div className="text-lg font-semibold">Kết quả: {score.correct}/{score.total}（{percent}%）・Chưa làm: {score.blank}</div>
+        <div className="text-lg font-semibold">Kết quả: {score.correct} điểm / {score.total} câu ・Chưa làm: {score.blank}（{percent}% đúng）</div>
         <div className="grid gap-3">
           {items.map((it, idx2) => {
-            const correct = new Set(it.correctShuffledIndexes || [])
+            const correctSet = new Set(it.correctShuffledIndexes || [])
             const ja = it.order.map(k => it.ja.options[k])
             const vi = it.order.map(k => it.vi.options[k])
             return (
@@ -145,7 +197,7 @@ export default function Player({ course, mode, questions, examYear }: PlayerProp
                 </div>
                 <ul className="list-none p-0 m-0">
                   {ja.map((op, i) => {
-                    const isCorrect = (it.multiCorrect === true) || correct.has(i)
+                    const isCorrect = (it.multiCorrect === true) || correctSet.has(i)
                     const picked = it.selectedIndex === i
                     return (
                       <li key={i} className="border rounded p-2 mb-2" style={{ background: isCorrect ? '#ecfdf3' : picked ? '#fef2f2' : '#fff' }}>
@@ -203,7 +255,7 @@ export default function Player({ course, mode, questions, examYear }: PlayerProp
           {jaOpts.map((op, i) => (
             <li key={i} className="border rounded p-2 mb-2">
               <label className="flex items-start gap-2 cursor-pointer">
-                <input type="radio" name={'q-' + q.id} checked={q.selectedIndex === i} onChange={() => onSelect(i)} className="mt-1" />
+                <input type="radio" name={'q-' + q.id} checked={q.selectedIndex === i} onChange={() => onSelect(i)} className="mt-1" disabled={q.submitted} />
                 <div className="flex-1">
                   <BilingualText ja={op.text || ''} vi={viOpts[i]?.text || ''} lang={lang} showFurigana={showFurigana} />
                 </div>
@@ -212,11 +264,48 @@ export default function Player({ course, mode, questions, examYear }: PlayerProp
           ))}
         </ul>
 
-        <div className="mt-3 flex gap-2">
-          <button className="px-3 py-2 border rounded bg-black text-white" onClick={submitAll}>
-            全問を提出 / Nộp toàn bài
+        <div className="mt-3 flex flex-wrap gap-2 items-center">
+          <button className="px-3 py-2 border rounded bg-black text-white" onClick={() => submitOne(false)} disabled={q.submitted}>
+            提出 / Nộp đáp án
+          </button>
+          <button className="px-3 py-2 border rounded" style={{ borderColor:'#f59e0b', background:'#fffbeb' }} onClick={() => submitOne(true)} disabled={q.submitted}>
+            適当に選んだ! / Chọn bừa!
+          </button>
+          <button className="px-3 py-2 border rounded" onClick={reshuffleCurrent} disabled={q.submitted || !globalShuffleEnabled}>
+            シャッフル / Trộn đáp án
+          </button>
+          <button className="px-3 py-2 border rounded" onClick={() => setFinished(true)}>
+            終了 / Kết thúc làm
+          </button>
+          <button className="px-3 py-2 border rounded" onClick={toggleExplain} disabled={!q.submitted}>
+            解説 / Lời giải
           </button>
         </div>
+
+        {q.showExplain && (
+          <div className="mt-3 p-3 rounded border bg-gray-50">
+            <div className="font-bold mb-1">Giải thích</div>
+            <div className="mb-2">
+              <BilingualText ja={q.ja.text} vi={q.vi.text} lang={lang} showFurigana={showFurigana} />
+            </div>
+            <ul className="list-disc pl-6">
+              {jaOpts.map((op, i) => (
+                <li key={i}>
+                  <BilingualText ja={op.text || ''} vi={viOpts[i]?.text || ''} lang={lang} showFurigana={showFurigana} />
+                  {(op.explanation || q.ja.explanation) && (
+                    <div className="text-sm opacity-80">{op.explanation || q.ja.explanation}</div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-2">
+        <button className="px-3 py-2 border rounded bg-black text-white" onClick={submitAll}>
+          全問を提出 / Nộp toàn bài
+        </button>
       </div>
     </div>
   )

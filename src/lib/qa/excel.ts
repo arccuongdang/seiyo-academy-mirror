@@ -1,5 +1,7 @@
 /**
- * Snapshots loader & helpers — with getCourseDisplayNameJA
+ * Extended helpers for courses/subjects & snapshots
+ * - Supports Courses sheet via subjects.json.courses[]
+ * - Era label helpers
  */
 
 import type {
@@ -9,6 +11,13 @@ import type {
   TagsIndex,
   TagDef,
 } from './schema';
+
+export type ThinCourse = {
+  courseId: string;
+  courseNameJA?: string;
+  courseNameVI?: string;
+  active?: boolean;
+};
 
 export type ThinSubjectsItem = {
   courseId: string;
@@ -45,6 +54,39 @@ export async function loadSubjectsJson(): Promise<SubjectsJSON> {
   return data;
 }
 
+/** Era labels */
+export function eraJP(year: number): string {
+  if (year >= 2019) return `R${year - 2018}`;      // Reiwa
+  if (year >= 1989) return `H${year - 1988}`;      // Heisei
+  if (year >= 1926) return `S${year - 1925}`;      // Showa
+  return `${year}`;
+}
+
+/** Courses */
+export function listActiveCourses(subjectsJson?: SubjectsJSON | null): ThinCourse[] {
+  const sj: any = subjectsJson || subjectsCache.value;
+  const rows: any[] = Array.isArray(sj?.courses) ? sj!.courses : [];
+  const out: ThinCourse[] = rows.map((r: any) => ({
+    courseId: String(r.courseId),
+    courseNameJA: r.courseNameJA ? String(r.courseNameJA) : undefined,
+    courseNameVI: r.courseNameVI ? String(r.courseNameVI) : undefined,
+    active: String(r.active || '').toUpperCase() === 'TRUE' || r.active === true,
+  }));
+  return out.filter(c => c.active);
+}
+
+export function getCourseDisplayNameJA(courseId: string, subjectsJson?: SubjectsJSON | null): string | null {
+  const list = listActiveCourses(subjectsJson);
+  const hit = list.find(c => c.courseId === courseId);
+  return hit?.courseNameJA || null;
+}
+export function getCourseDisplayNameVI(courseId: string, subjectsJson?: SubjectsJSON | null): string | null {
+  const list = listActiveCourses(subjectsJson);
+  const hit = list.find(c => c.courseId === courseId);
+  return hit?.courseNameVI || null;
+}
+
+/** Subjects */
 export function listSubjectsForCourse(courseId: string, subjectsJson: SubjectsJSON): ThinSubjectsItem[] {
   const items = (subjectsJson.items || []).filter((it: any) => it.courseId === courseId);
   const thin: ThinSubjectsItem[] = items.map((it: any) => ({
@@ -84,27 +126,9 @@ export function findSubjectMeta(
     : null;
 }
 
-/** Japanese name of course (fallback to courseId till Course sheet is wired) */
-export function getCourseDisplayNameJA(courseId: string, subjectsJson?: SubjectsJSON | null): string | null {
-  try {
-    const anyS: any = subjectsJson || subjectsCache.value;
-    const list = anyS?.courses || anyS?.items || [];
-    if (Array.isArray(list)) {
-      const hit = list.find((x: any) => x?.courseId === courseId && typeof x?.nameJA === 'string' && x.nameJA.trim());
-      if (hit) return String(hit.nameJA).trim();
-    }
-  } catch {}
-  return null;
-}
+/* Snapshot & raw loaders */
 
-/* Snapshot selection & RAW loader */
-
-type ThinManifestFileEntry = {
-  courseId: string;
-  subjectId: string;
-  path: string;
-  version?: number;
-};
+type ThinManifestFileEntry = { courseId: string; subjectId: string; path: string; version?: number; };
 
 function collectFilesFor(courseId: string, subjectId: string, manifest: SnapshotManifest): ThinManifestFileEntry[] {
   const files = (manifest.files || []) as any[];
@@ -117,15 +141,17 @@ function collectFilesFor(courseId: string, subjectId: string, manifest: Snapshot
   }));
 }
 
-export function selectLatestFile(
-  courseId: string,
-  subjectId: string,
-  manifest: SnapshotManifest
-): ThinManifestFileEntry | null {
+export function selectLatestFile(courseId: string, subjectId: string, manifest: SnapshotManifest): ThinManifestFileEntry | null {
   const files = collectFilesFor(courseId, subjectId, manifest);
   if (!files.length) return null;
   files.sort((a, b) => (b.version ?? 0) - (a.version ?? 0));
   return files[0];
+}
+
+async function fetchJSONSnapshot<T = any>(url: string): Promise<T> {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Fetch failed: ${url}`);
+  return res.json() as Promise<T>;
 }
 
 export async function loadRawQuestionsFor(courseId: string, subjectId: string): Promise<QuestionSnapshotItem[]> {
@@ -139,7 +165,7 @@ export async function loadRawQuestionsFor(courseId: string, subjectId: string): 
     return [];
   }
   const url = `${SNAPSHOT_BASE}/${file.path}`;
-  const data = await fetchJSON<QuestionSnapshotItem[] | { items: QuestionSnapshotItem[] }>(url);
+  const data = await fetchJSONSnapshot<QuestionSnapshotItem[] | { items: QuestionSnapshotItem[] }>(url);
   const arr: QuestionSnapshotItem[] = Array.isArray(data)
     ? data
     : Array.isArray((data as any).items)
@@ -182,10 +208,9 @@ export async function listAvailableYearsForCourse(courseId: string, subjectsJson
   return Array.from(set).sort((a, b) => b - a);
 }
 
-/* TagsIndex helpers for Admin */
+/* Admin: TagsIndex helpers */
 
 import * as XLSX from 'xlsx';
-
 export type TagDefLocal = TagDef;
 export type TagsIndexLocal = TagsIndex;
 
@@ -201,7 +226,7 @@ export function buildTagsIndexFromSheet(ws: XLSX.WorkSheet): TagsIndex {
     const subject = (rows[1]?.[j] || '').trim();
     const lang = (rows[2]?.[j] || '').trim().toUpperCase();
     if (!course || !subject) continue;
-    if (subject.toLowerCase() === 'no') continue; // skip column "No"
+    if (subject.toLowerCase() === 'no') continue;
     cols.push({ course, subject, lang, j });
   }
 
@@ -219,7 +244,7 @@ export function buildTagsIndexFromSheet(ws: XLSX.WorkSheet): TagsIndex {
     const [courseId, subjectId] = key.split('__');
     out[courseId] ??= {};
     const arr: TagDef[] = [];
-    for (let i = 3; i < H; i++) { // from row 4 (index 3)
+    for (let i = 3; i < H; i++) {
       const nameJA = g.ja ? (rows[i]?.[g.ja.j] || '').trim() : '';
       const nameVI = g.vi ? (rows[i]?.[g.vi.j] || '').trim() : '';
       if (!nameJA && !nameVI) continue;

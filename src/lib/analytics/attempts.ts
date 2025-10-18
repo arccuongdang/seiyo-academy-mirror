@@ -1,6 +1,8 @@
+
 import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, addDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 
+/** Session creation */
 type CreateSessionInput = {
   courseId: string;
   subjectId: string;
@@ -12,14 +14,17 @@ type UpdateSessionInput = {
   correct?: number;
   blank?: number;
 };
+
+/** Finalize payload from Player/Practice pages */
 type FinalizeInput = {
-  score: number;
-  tags?: string[]; // optional; omit if undefined/empty
+  score: number;                 // rule: store absolute correct count
+  tags?: string[];               // optional; omit if empty
   answers: Array<{
     questionId: string;
-    pickedIndexes: number[];   // indexes in the SHUFFLED space
-    correctIndexes: number[];  // indexes in the SHUFFLED space
+    pickedIndexes: number[];     // indexes in the SHUFFLED space
+    correctIndexes: number[];    // indexes in the SHUFFLED space
     isCorrect: boolean;
+    guessed?: boolean;
   }>;
   durationSec?: number;
 };
@@ -58,18 +63,14 @@ export async function finalizeAttemptFromSession(sessionId: string, input: Final
   const db = getFirestore();
   const attemptsCol = collection(db, 'users', uid, 'attempts');
 
-  // Sanitize: remove undefined/empty fields (esp. tags)
+  // Sanitize payload (esp. tags)
   const payload: any = {
     score: input.score,
     answers: input.answers,
     createdAt: serverTimestamp(),
   };
-  if (Array.isArray(input.tags) && input.tags.length > 0) {
-    payload.tags = input.tags;
-  }
-  if (typeof input.durationSec === 'number') {
-    payload.durationSec = input.durationSec;
-  }
+  if (Array.isArray(input.tags) && input.tags.length > 0) payload.tags = input.tags;
+  if (typeof input.durationSec === 'number') payload.durationSec = input.durationSec;
 
   const attemptDoc = await addDoc(attemptsCol, payload);
 
@@ -82,14 +83,34 @@ export async function finalizeAttemptFromSession(sessionId: string, input: Final
   return { attemptId: attemptDoc.id };
 }
 
-export async function upsertWrong(input: { questionId: string; courseId: string; subjectId: string; examYear: number }) {
+/**
+ * Restore: upsertWrong
+ * Called by start/year practice pages to mark a question as wrong/flagged.
+ * We merge by questionId to maintain one row per question.
+ */
+export async function upsertWrong(input: {
+  questionId: string;
+  courseId: string;
+  subjectId: string;
+  examYear?: number;
+  tags?: string[];
+  reason?: 'wrong' | 'skipped' | 'guessed';
+}) {
   const auth = getAuth();
   const uid = auth.currentUser?.uid;
   if (!uid) return;
   const db = getFirestore();
-  const ref = doc(collection(db, 'users', uid, 'wrongs'), input.questionId);
-  await setDoc(ref, {
-    ...input,
+
+  const { questionId, courseId, subjectId, examYear, tags, reason } = input;
+  const payload: any = {
+    courseId,
+    subjectId,
     updatedAt: serverTimestamp(),
-  }, { merge: true });
+  };
+  if (typeof examYear === 'number') payload.examYear = examYear;
+  if (Array.isArray(tags) && tags.length > 0) payload.tags = tags;
+  if (typeof reason === 'string') payload.reason = reason;
+
+  const ref = doc(collection(db, 'users', uid, 'wrongs'), questionId);
+  await setDoc(ref, payload, { merge: true });
 }
