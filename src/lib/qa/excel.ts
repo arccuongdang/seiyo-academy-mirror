@@ -1,8 +1,5 @@
-
 /**
- * Snapshots loader & helpers (Plan B) — revised helpers
- * - Adds: findSubjectMeta (already exported in your copy), and
- *         getCourseDisplayNameJA() placeholder to wire Japanese course label later
+ * Snapshots loader & helpers — with getCourseDisplayNameJA
  */
 
 import type {
@@ -87,14 +84,11 @@ export function findSubjectMeta(
     : null;
 }
 
-/** Placeholder: Japanese name of course (will use Course sheet later) */
+/** Japanese name of course (fallback to courseId till Course sheet is wired) */
 export function getCourseDisplayNameJA(courseId: string, subjectsJson?: SubjectsJSON | null): string | null {
-  // If subjects.json already contains a course-level map, read it here.
-  // For now, return null so callers can fallback to the raw courseId.
   try {
     const anyS: any = subjectsJson || subjectsCache.value;
     const list = anyS?.courses || anyS?.items || [];
-    // Try to find an entry that has courseId + nameJA (course-level)
     if (Array.isArray(list)) {
       const hit = list.find((x: any) => x?.courseId === courseId && typeof x?.nameJA === 'string' && x.nameJA.trim());
       if (hit) return String(hit.nameJA).trim();

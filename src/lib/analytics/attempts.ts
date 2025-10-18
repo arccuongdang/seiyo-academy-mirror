@@ -1,4 +1,3 @@
-
 import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, addDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 
@@ -15,11 +14,11 @@ type UpdateSessionInput = {
 };
 type FinalizeInput = {
   score: number;
-  tags?: string[];
+  tags?: string[]; // optional; omit if undefined/empty
   answers: Array<{
     questionId: string;
-    pickedIndexes: number[];
-    correctIndexes: number[];
+    pickedIndexes: number[];   // indexes in the SHUFFLED space
+    correctIndexes: number[];  // indexes in the SHUFFLED space
     isCorrect: boolean;
   }>;
   durationSec?: number;
@@ -58,10 +57,21 @@ export async function finalizeAttemptFromSession(sessionId: string, input: Final
 
   const db = getFirestore();
   const attemptsCol = collection(db, 'users', uid, 'attempts');
-  const attemptDoc = await addDoc(attemptsCol, {
-    ...input,
+
+  // Sanitize: remove undefined/empty fields (esp. tags)
+  const payload: any = {
+    score: input.score,
+    answers: input.answers,
     createdAt: serverTimestamp(),
-  });
+  };
+  if (Array.isArray(input.tags) && input.tags.length > 0) {
+    payload.tags = input.tags;
+  }
+  if (typeof input.durationSec === 'number') {
+    payload.durationSec = input.durationSec;
+  }
+
+  const attemptDoc = await addDoc(attemptsCol, payload);
 
   await updateDoc(doc(db, 'users', uid, 'attemptSessions', sessionId), {
     status: 'finalized',
