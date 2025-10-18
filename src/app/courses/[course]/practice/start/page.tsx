@@ -2,11 +2,7 @@
 
 /**
  * Practice Start — Luyện theo môn (mode=subject)
- * - Fixes 2025-10-16:
- *   1) TS error: createAttemptSession missing required `mode` -> add `mode: 'subject'`.
- *   2) Wrong call signature to finalizeAttemptFromSession -> now passes (sessionId, { score, tags }).
- *   3) Rechecked prior issues in this thread: no direct Firestore usage here,
- *      uses getAuth() only on client; page already 'use client'.
+ * Giữ nguyên logic chấm/attempt; thêm VI toggle + JA furigana; loại bỏ JSX <Player/> thừa.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -17,7 +13,6 @@ import { toQARenderItemFromSnapshot } from '../../../../../lib/qa/formatters';
 
 import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession } from '../../../../../lib/analytics/attempts';
 import { getAuth } from 'firebase/auth';
-
 import { bumpWrong } from '../../../../../lib/analytics/wrongs';
 
 import type {
@@ -26,6 +21,7 @@ import type {
   QARenderOption,
 } from '../../../../../lib/qa/schema';
 
+/* -------------------- Helpers -------------------- */
 function parseYearsCSV(v: string | null): number[] {
   if (!v) return [];
   return v.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isFinite(n));
@@ -43,7 +39,6 @@ function sampleN<T>(arr: T[], n: number): T[] {
   if (n >= arr.length) return [...arr];
   return shuffled(arr).slice(0, n);
 }
-
 function gradeByIndex(selectedIndex: number | null, options: QARenderOption[]) {
   const correct = options.map((o, i) => (o.isAnswer ? i : -1)).filter(i => i >= 0);
   return {
@@ -53,15 +48,43 @@ function gradeByIndex(selectedIndex: number | null, options: QARenderOption[]) {
   };
 }
 
+/* -------------------- Furigana (JA) -------------------- */
+function FuriganaText({ text, enabled }: { text?: string; enabled?: boolean }) {
+  const [html, setHtml] = useState<string>('');
+  useEffect(() => {
+    let on = true;
+    (async () => {
+      const t = (text || '').trim();
+      if (!t) { setHtml(''); return; }
+      if (!enabled) { setHtml(escapeHtml(t)); return; }
+      try {
+        // dynamic import to avoid SSR/edge issues; fallback gracefully
+        // expected exported: toFuriganaHtml(s: string): Promise<string>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mod: any = await import('../../../../../lib/jp/kuroshiro');
+        const out = typeof mod?.toFuriganaHtml === 'function' ? await mod.toFuriganaHtml(t) : null;
+        if (on) setHtml(out || escapeHtml(t));
+      } catch {
+        if (on) setHtml(escapeHtml(t));
+      }
+    })();
+    return () => { on = false; };
+  }, [text, enabled]);
+  if (!html) return null;
+  return <span dangerouslySetInnerHTML={{ __html: html }} />;
+}
+function escapeHtml(s: string) {
+  return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');
+}
+
+/* -------------------- Types -------------------- */
 type ViewQuestion = {
   id: string;
   examYear: number;
   courseId: string;
   subjectId: string;
-
   ja: QARenderItem;
   vi: QARenderItem;
-
   order: number[];
   selectedIndex: number | null;
   submitted: boolean;
@@ -83,7 +106,6 @@ export default function PracticeStart({ params }: { params: { course: string } }
       : 10);
 
   const shuffle = sp.get('shuffle') === '1';
-
   const randomLastParam = sp.get('randomLast');
   const randomLast = randomLastParam === '5' || randomLastParam === '10'
     ? (parseInt(randomLastParam, 10) as 5 | 10)
@@ -106,6 +128,11 @@ export default function PracticeStart({ params }: { params: { course: string } }
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
+
+  // JA/VI & Furigana controls
+  const [showVIQuestion, setShowVIQuestion] = useState<boolean>(false);
+  const [showVIOption, setShowVIOption] = useState<Record<number, boolean>>({});
+  const [showFurigana, setShowFurigana] = useState<boolean>(true);
 
   useEffect(() => {
     if (!subject) return;
@@ -196,6 +223,7 @@ export default function PracticeStart({ params }: { params: { course: string } }
       };
     });
 
+    // (Loại bỏ JSX <Player/> thừa — không render tại đây)
     setQuestions(view);
     setIndex(0);
     setStarted(true);
@@ -204,13 +232,11 @@ export default function PracticeStart({ params }: { params: { course: string } }
     try {
       const auth = getAuth();
       if (auth.currentUser?.uid) {
-        // ✅ FIX: thiếu mode -> thêm mode: 'subject'
         const { sessionId } = await createAttemptSession({
           courseId: course,
           subjectId: subject,
           mode: 'subject',
           total: view.length,
-          // examYear: undefined (subject-mode không cần)
         });
         setSessionId(sessionId);
       }
@@ -312,6 +338,10 @@ export default function PracticeStart({ params }: { params: { course: string } }
   const viOpts = q.order.map(k => q.vi.options[k]);
   const selected = q.selectedIndex;
 
+  const toggleVIOption = (i: number) => {
+    setShowVIOption(prev => ({ ...prev, [i]: !prev[i] }));
+  };
+
   return (
     <main style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
       <h1 style={{ fontSize: 20, fontWeight: 800, marginBottom: 12 }}>
@@ -334,44 +364,67 @@ export default function PracticeStart({ params }: { params: { course: string } }
         <button onClick={() => goto(index - 1)} disabled={index === 0} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>前へ / Trước</button>
         <div>{index + 1} / {questions.length}</div>
         <button onClick={() => goto(index + 1)} disabled={index === questions.length - 1} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>次へ / Tiếp</button>
+
+        <div style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={() => setShowVIQuestion(s => !s)} style={{ padding: '2px 6px', border: '1px solid #ddd', borderRadius: 6, fontSize: 12 }}>
+            VI (Câu hỏi)
+          </button>
+          <label style={{ padding: '2px 6px', border: '1px solid #ddd', borderRadius: 6, fontSize: 12 }}>
+            <input type="checkbox" checked={showFurigana} onChange={e => setShowFurigana(e.target.checked)} /> ふりがな
+          </label>
+        </div>
       </div>
 
       <div style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
         <div style={{ fontWeight: 600, marginBottom: 8 }}>
-          問 {index + 1}: {q.ja.text || q.vi.text || '(No content)'}
+          問 {index + 1}: <FuriganaText text={q.ja.text || q.vi.text || ''} enabled={showFurigana} />
         </div>
 
         {q.ja.image && <img src={q.ja.image} alt="" style={{ maxWidth: '100%', marginBottom: 8 }} />}
 
+        {showVIQuestion && (q.vi.text || '').trim() && (
+          <div style={{ background: '#fffbeb', padding: 8, borderRadius: 8, marginBottom: 8 }}>
+            {q.vi.text}
+          </div>
+        )}
+
         <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {jaOpts.map((opt, i) => {
             const selectedThis = selected === i;
-            const showResult = !!q.submitted;
-            const isCorrectChoice = !!q.correctShuffledIndexes && q.correctShuffledIndexes.includes(i);
-            const isWrongPicked = showResult && selectedThis && !isCorrectChoice && !(q.multiCorrect);
-
+            const hasVI = !!(viOpts[i]?.text && viOpts[i].text!.trim().length > 0);
+            const showVI = !!showVIOption[i];
             return (
               <li key={i}
-                  style={{
-                    border: '1px solid #f0f0f0',
-                    borderRadius: 8,
-                    padding: 10,
-                    marginBottom: 8,
-                    background: q.submitted
-                      ? ( (q.multiCorrect || isCorrectChoice) ? '#ecfdf3' : (isWrongPicked ? '#fef2f2' : '#fff') )
-                      : '#fff',
-                  }}>
+                  style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, marginBottom: 8, background: q.submitted ? '#f9fafb' : '#fff' }}>
                 <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
                   <input
                     type="radio"
-                    name={`q-${q.id}`}
+                    name={'q-' + q.id}
                     checked={selectedThis}
                     onChange={() => selectOption(index, i)}
                     disabled={q.submitted}
                     style={{ marginTop: 4 }}
                   />
                   <div style={{ flex: 1 }}>
-                    <div>{opt.text || viOpts[i]?.text || '(Không có nội dung)'}</div>
+                    <div><FuriganaText text={opt.text || viOpts[i]?.text || ''} enabled={showFurigana} /></div>
+
+                    {showVI && hasVI && (
+                      <div style={{ background: '#fffbeb', padding: 6, borderRadius: 6, marginTop: 6 }}>
+                        {viOpts[i]?.text}
+                      </div>
+                    )}
+
+                    {hasVI && (
+                      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                        <button
+                          onClick={() => toggleVIOption(i)}
+                          aria-pressed={!!showVI}
+                          style={{ padding: '2px 6px', border: '1px solid #ddd', borderRadius: 6, fontSize: 12 }}
+                        >
+                          VI
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </label>
               </li>
@@ -420,7 +473,6 @@ export default function PracticeStart({ params }: { params: { course: string } }
                   if (auth.currentUser?.uid) {
                     if (sessionId) {
                       await updateAttemptSession(sessionId, { correct, blank });
-                      // ✅ FIX: đúng chữ ký finalizeAttemptFromSession(sessionId, extra)
                       await finalizeAttemptFromSession(sessionId, { score, tags });
                     }
                     alert('Đã lưu kết quả.');
@@ -432,7 +484,6 @@ export default function PracticeStart({ params }: { params: { course: string } }
                   alert('Không thể lưu kết quả, thử lại sau.');
                 }
               }}
-              className=""
               style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #111', background: '#111', color: '#fff', fontWeight: 700 }}
             >
               Kết thúc & lưu kết quả

@@ -1,33 +1,18 @@
 'use client';
 
 /**
- * ============================================================================
  * Year Practice — Luyện theo năm (mode=year)
- * ----------------------------------------------------------------------------
- * Sửa ngày 2025-10-16
- * 1) TS error: thiếu `mode` khi gọi createAttemptSession → thêm `mode: 'year'`
- *    + (tùy chọn) truyền kèm `examYear: fixedYear` cho đầy đủ ngữ cảnh.
- * 2) Đồng bộ chữ ký finalizeAttemptFromSession:
- *    Trước đây gọi sai kiểu object. Nay dùng đúng: (sessionId, { score, tags })
- * 3) Rà lại các lỗi đã gặp trong thread:
- *    - Không dùng Firestore trực tiếp → không cần ensureDb().
- *    - Chỉ dùng getAuth() + kiểm tra currentUser → an toàn SSR.
- *    - Multi-correct giữ nguyên hành vi: nếu có >=2 đáp án đúng → mọi lựa chọn đều tính đúng.
- * ============================================================================
+ * Giữ nguyên logic; xóa JSX <Player/> thừa; thêm JA furigana; guard fixedYear.
  */
 
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
-// Loaders/formatters
 import { loadRawQuestionsFor } from '../../../../../lib/qa/excel';
 import { toQARenderItemFromSnapshot } from '../../../../../lib/qa/formatters';
 
-// Attempts
 import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession } from '../../../../../lib/analytics/attempts';
 import { getAuth } from 'firebase/auth';
-
-// Nhập câu sai
 import { bumpWrong } from '../../../../../lib/analytics/wrongs';
 
 import type { QuestionSnapshotItem, QARenderItem, QARenderOption } from '../../../../../lib/qa/schema';
@@ -46,6 +31,33 @@ function gradeSingleChoiceByIndex(selectedIndex: number | null, options: QARende
   const multiCorrect = correct.length > 1;
   const isCorrect = selectedIndex != null ? correct.includes(selectedIndex) : false;
   return { isCorrect, correctIndexes: correct, multiCorrect };
+}
+
+/* -------------------- Furigana (JA) -------------------- */
+function FuriganaText({ text, enabled }: { text?: string; enabled?: boolean }) {
+  const [html, setHtml] = useState<string>('');
+  useEffect(() => {
+    let on = true;
+    (async () => {
+      const t = (text || '').trim();
+      if (!t) { setHtml(''); return; }
+      if (!enabled) { setHtml(escapeHtml(t)); return; }
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mod: any = await import('../../../../../lib/jp/kuroshiro');
+        const out = typeof mod?.toFuriganaHtml === 'function' ? await mod.toFuriganaHtml(t) : null;
+        if (on) setHtml(out || escapeHtml(t));
+      } catch {
+        if (on) setHtml(escapeHtml(t));
+      }
+    })();
+    return () => { on = false; };
+  }, [text, enabled]);
+  if (!html) return null;
+  return <span dangerouslySetInnerHTML={{ __html: html }} />;
+}
+function escapeHtml(s: string) {
+  return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');
 }
 
 /* -------------------- View types -------------------- */
@@ -78,7 +90,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
   const { course } = params;
   const search = useSearchParams();
 
-  const subject = search.get('subject') || '';
+  const subject = (search.get('subject') || '').toUpperCase();
   const yearStr = search.get('year') || '';
   const fixedYear = Number(yearStr);
   const shuffleParam = search.get('shuffle') === '1';
@@ -91,7 +103,6 @@ export default function YearPracticePage({ params }: { params: { course: string 
 
   const [questions, setQuestions] = useState<ViewQuestion[]>([]);
   const [index, setIndex] = useState(0);
-
   const [randomizeOptions, setRandomizeOptions] = useState<boolean>(shuffleParam);
 
   const [finished, setFinished] = useState(false);
@@ -102,6 +113,9 @@ export default function YearPracticePage({ params }: { params: { course: string 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
 
+  // JA/VI & Furigana controls
+  const [showFurigana, setShowFurigana] = useState<boolean>(true);
+
   /* -------- Load RAW -------- */
   useEffect(() => {
     if (!subject || !Number.isFinite(fixedYear)) return;
@@ -109,7 +123,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
     setErr(null);
     (async () => {
       try {
-        if (!allowed.has(subject.toUpperCase())) {
+        if (!allowed.has(subject)) {
           setErr('Tham số không hợp lệ. Hãy chọn môn và năm hợp lệ từ trang Hub.');
           setLoading(false);
           return;
@@ -126,7 +140,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
 
   /* -------- Lọc đúng năm + format + tạo session -------- */
   useEffect(() => {
-    if (!rawItems.length || !fixedYear) return;
+    if (!rawItems.length || !Number.isFinite(fixedYear)) return;
 
     const rows = rawItems.filter(q => Number(q.examYear) === fixedYear);
     if (rows.length === 0) {
@@ -161,21 +175,15 @@ export default function YearPracticePage({ params }: { params: { course: string 
     setTab('all');
     setStartedAtMs(Date.now());
 
-    // tạo session nếu đăng nhập
     (async () => {
       try {
-        if (!allowed.has(subject.toUpperCase())) {
-          setErr('Tham số không hợp lệ. Hãy chọn môn và năm hợp lệ từ trang Hub.');
-          setLoading(false);
-          return;
-        }
         const auth = getAuth();
         if (auth.currentUser?.uid) {
           const { sessionId } = await createAttemptSession({
             courseId: course,
             subjectId: subject,
-            mode: 'year',           // ✅ thêm bắt buộc
-            examYear: fixedYear,    // (khuyến nghị) rõ ngữ cảnh năm
+            mode: 'year',
+            examYear: fixedYear,
             total: view.length,
           });
           setSessionId(sessionId);
@@ -184,7 +192,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
         console.warn('[attempts] create session failed:', e);
       }
     })();
-  }, [rawItems, fixedYear, randomizeOptions, subject]);
+  }, [rawItems, fixedYear, randomizeOptions, subject, course]);
 
   const goto = (i: number) => setIndex(prev => Math.min(Math.max(i, 0), questions.length - 1));
   const onSelect = (qIdx: number, shuffledIndex: number) => {
@@ -207,7 +215,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
       };
     });
 
-    // 2) ✅ Ghi “câu sai” sau khi đã biết kết quả
+    // 2) Ghi “câu sai”
     graded.forEach((q) => {
       if (!q.multiCorrect && q.isCorrect === false) {
         bumpWrong({
@@ -230,30 +238,20 @@ export default function YearPracticePage({ params }: { params: { course: string 
     setTab('all');
 
     // 4) Cập nhật progress + finalize attempt
-    const durationSec = startedAtMs ? Math.max(1, Math.round((Date.now() - startedAtMs) / 1000)) : undefined;
     const scoreNum = total ? Math.round((correct / total) * 100) : 0;
     const tagsParam = search.get('tags');
     const tags = tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : undefined;
 
     try {
-        if (!allowed.has(subject.toUpperCase())) {
-          setErr('Tham số không hợp lệ. Hãy chọn môn và năm hợp lệ từ trang Hub.');
-          setLoading(false);
-          return;
-        }
       const auth = getAuth();
-      if (auth.currentUser?.uid) {
-        if (sessionId) {
-          await updateAttemptSession(sessionId, { correct, blank });
-          // ✅ dùng đúng chữ ký finalizeAttemptFromSession(sessionId, extra)
-          await finalizeAttemptFromSession(sessionId, { score: scoreNum, tags });
-        }
+      if (auth.currentUser?.uid && sessionId) {
+        await updateAttemptSession(sessionId, { correct, blank });
+        await finalizeAttemptFromSession(sessionId, { score: scoreNum, tags });
       }
     } catch (e) {
       console.error('[attempts] finalize failed:', e);
     }
   };
-
 
   const toggleVIQuestion = (qIdx: number) => {
     setQuestions(prev => prev.map((q, i) => (i === qIdx ? { ...q, showVIQuestion: !q.showVIQuestion } : q)));
@@ -268,7 +266,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
   };
 
   /* -------- UI trạng thái -------- */
-  if (!subject || !fixedYear) {
+  if (!subject || !Number.isFinite(fixedYear)) {
     return (
       <main style={{ padding: 24 }}>
         Thiếu tham số <code>?subject=...</code> và/hoặc <code>?year=...</code>
@@ -293,25 +291,27 @@ export default function YearPracticePage({ params }: { params: { course: string 
           {course} / {subject} — {fixedYear} 年度 過去問
         </h1>
 
-        {/* Banner multi-correct */}
-        {q.expectedMultiCount > 1 && !q.submitted && (
+        {(q.expectedMultiCount > 1 && !q.submitted) && (
           <div style={{ border: '1px solid #60a5fa', background: '#eff6ff', color: '#1d4ed8', borderRadius: 8, padding: 10, marginBottom: 12 }}>
             Câu này có <b>{q.expectedMultiCount}</b> đáp án đúng
           </div>
         )}
 
-        {/* Điều hướng */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <button onClick={() => setIndex(i => Math.max(0, i - 1))} disabled={index === 0} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>前へ / Trước</button>
           <div>{index + 1} / {questions.length}</div>
           <button onClick={() => setIndex(i => Math.min(questions.length - 1, i + 1))} disabled={index === questions.length - 1} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>次へ / Tiếp</button>
+
+          <label style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <input type="checkbox" checked={showFurigana} onChange={e => setShowFurigana(e.target.checked)} />
+            ふりがな
+          </label>
         </div>
 
-        {/* Câu hỏi */}
         <div style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
             <div style={{ fontWeight: 600 }}>
-              問 {index + 1}: {q.ja.text || q.vi.text || '(No content)'}
+              問 {index + 1}: <FuriganaText text={q.ja.text || q.vi.text || ''} enabled={showFurigana} />
             </div>
             {(q.vi.text || '').trim() && (
               <button
@@ -348,7 +348,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
                       style={{ marginTop: 4 }}
                     />
                     <div style={{ flex: 1 }}>
-                      <div>{opt.text || viOpts[i]?.text || '(No content)'}</div>
+                      <div><FuriganaText text={opt.text || viOpts[i]?.text || ''} enabled={showFurigana} /></div>
 
                       {showVI && hasVI && (
                         <div style={{ background: '#fffbeb', padding: 6, borderRadius: 6, marginTop: 6 }}>
@@ -441,7 +441,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
           return (
             <div key={q.id} style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
               <div style={{ fontWeight: 600, marginBottom: 8 }}>
-                Câu {idx + 1}: {q.ja.text || q.vi.text || '(No content)'}
+                Câu {idx + 1}: <FuriganaText text={q.ja.text || q.vi.text || ''} enabled={true} />
               </div>
               <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                 {jaOpts.map((opt, i) => {
@@ -457,7 +457,7 @@ export default function YearPracticePage({ params }: { params: { course: string 
                           background: isCorrect ? '#ecfdf3' : picked ? '#fef2f2' : '#fff',
                         }}>
                       <div style={{ fontWeight: 600 }}>{isCorrect ? '✅ 正解' : picked ? '❌ 不正解' : '・'}</div>
-                      <div>{opt.text || viOpts[i]?.text || '(No content)'}</div>
+                      <div><FuriganaText text={opt.text || viOpts[i]?.text || ''} enabled={true} /></div>
                       {(opt.explanation || q.ja.explanation) && (
                         <div style={{ marginTop: 6, fontSize: 14, color: '#475467' }}>
                           {opt.explanation || q.ja.explanation}
