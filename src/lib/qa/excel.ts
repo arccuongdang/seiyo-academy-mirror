@@ -1,7 +1,8 @@
+
 /**
- * Extended helpers for courses/subjects & snapshots
- * - Supports Courses sheet via subjects.json.courses[]
- * - Era label helpers
+ * Snapshots helpers (patched):
+ * - Works even if subjects.json has NO `courses` array (infers from `items[]`)
+ * - getCourseDisplayNameJA/VI fall back to a local mapping (KTS2)
  */
 
 import type {
@@ -34,6 +35,12 @@ const manifestCache: { value: SnapshotManifest | null } = { value: null };
 const subjectsCache: { value: SubjectsJSON | null } = { value: null };
 const rawCache = new Map<string, QuestionSnapshotItem[]>();
 
+/** Optional fallback names if Courses sheet is absent */
+const COURSE_NAME_MAP: Record<string, { JA: string; VI?: string }> = {
+  KTS2: { JA: '２級建築士', VI: 'Kiến trúc sư cấp 2' },
+  // Add more defaults if needed
+};
+
 async function fetchJSON<T = any>(path: string): Promise<T> {
   const res = await fetch(path, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Fetch failed ${path}: ${res.status} ${res.statusText}`);
@@ -63,27 +70,57 @@ export function eraJP(year: number): string {
 }
 
 /** Courses */
+function coerceBool(v: any): boolean {
+  if (v === true) return true;
+  const s = String(v || '').trim().toUpperCase();
+  return s === 'TRUE' || s === '1' || s === 'YES';
+}
+
+/**
+ * Prefer sj.courses when present; otherwise infer from sj.items[] (subjects list).
+ * Inferred courses are considered active=true and get names from fallback map.
+ */
 export function listActiveCourses(subjectsJson?: SubjectsJSON | null): ThinCourse[] {
-  const sj: any = subjectsJson || subjectsCache.value;
-  const rows: any[] = Array.isArray(sj?.courses) ? sj!.courses : [];
-  const out: ThinCourse[] = rows.map((r: any) => ({
-    courseId: String(r.courseId),
-    courseNameJA: r.courseNameJA ? String(r.courseNameJA) : undefined,
-    courseNameVI: r.courseNameVI ? String(r.courseNameVI) : undefined,
-    active: String(r.active || '').toUpperCase() === 'TRUE' || r.active === true,
-  }));
-  return out.filter(c => c.active);
+  const sj: any = subjectsJson || subjectsCache.value || {};
+  const out: ThinCourse[] = [];
+
+  if (Array.isArray(sj.courses) && sj.courses.length > 0) {
+    for (const r of sj.courses) {
+      const active = coerceBool(r?.active ?? true);
+      if (!active) continue;
+      out.push({
+        courseId: String(r.courseId),
+        courseNameJA: r.courseNameJA || r.nameJA || COURSE_NAME_MAP[String(r.courseId)]?.JA,
+        courseNameVI: r.courseNameVI || r.nameVI || COURSE_NAME_MAP[String(r.courseId)]?.VI,
+        active: true,
+      });
+    }
+    return out;
+  }
+
+  // Fallback: infer unique courseIds from items[]
+  const items: any[] = Array.isArray(sj.items) ? sj.items : [];
+  const uniq = Array.from(new Set(items.map(it => String(it.courseId))).values());
+  for (const courseId of uniq) {
+    out.push({
+      courseId,
+      courseNameJA: COURSE_NAME_MAP[courseId]?.JA || courseId,
+      courseNameVI: COURSE_NAME_MAP[courseId]?.VI,
+      active: true,
+    });
+  }
+  return out;
 }
 
 export function getCourseDisplayNameJA(courseId: string, subjectsJson?: SubjectsJSON | null): string | null {
   const list = listActiveCourses(subjectsJson);
   const hit = list.find(c => c.courseId === courseId);
-  return hit?.courseNameJA || null;
+  return (hit?.courseNameJA || COURSE_NAME_MAP[courseId]?.JA || null);
 }
 export function getCourseDisplayNameVI(courseId: string, subjectsJson?: SubjectsJSON | null): string | null {
   const list = listActiveCourses(subjectsJson);
   const hit = list.find(c => c.courseId === courseId);
-  return hit?.courseNameVI || null;
+  return (hit?.courseNameVI || COURSE_NAME_MAP[courseId]?.VI || null);
 }
 
 /** Subjects */
