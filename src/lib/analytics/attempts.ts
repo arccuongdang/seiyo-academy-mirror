@@ -90,7 +90,9 @@ export async function finalizeAttemptFromSession(sessionId: string, input: Final
     mode: s.mode,
     courseId: s.courseId,
     subjectId: s.subjectId,
-    examYear: typeof s.examYear === 'number' ? s.examYear : null,
+    // examYear: only include if valid number
+    // (omit if not number to satisfy security rules)
+    // examYear: typeof s.examYear === 'number' ? s.examYear : null,
     total: s.total ?? (Array.isArray(input.answers) ? input.answers.length : 0),
     correct: input.score,
     score: input.score,
