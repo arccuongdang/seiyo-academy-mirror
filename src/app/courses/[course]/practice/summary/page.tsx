@@ -6,12 +6,26 @@ import { getAuth } from 'firebase/auth'
 import { getFirestore, doc, getDoc } from 'firebase/firestore'
 import { loadSubjectsJson, listSubjectsForCourse, loadRawQuestionsFor } from '../../../../../lib/qa/excel'
 
+function renderWithFurigana(text: string, enabled: boolean): string {
+  if (!text) return '';
+  // If disabled, strip <rt>/<rp> to hide furigana in existing ruby markup.
+  if (!enabled) {
+    return text.replace(/<rp>.*?<\/rp>/g, '').replace(/<rt>.*?<\/rt>/g, '');
+  }
+  // Enabled: return as-is (assumes snapshot may already contain ruby markup).
+  return text;
+}
+
+
+
 type AnswerRow = {
   questionId: string
   pickedIndexes: number[]
   correctIndexes: number[]
+  order?: number[]
   isCorrect: boolean
   guessed?: boolean
+  confident?: boolean
 }
 
 type Snap = Record<string, any>
@@ -43,9 +57,13 @@ function toRenderableFromRaw(raw: Snap) {
   return { ja, vi }
 }
 
-function Bilingual({ ja, vi, lang }: { ja?: string; vi?: string; lang: 'JA'|'VI' }) {
-  const text = (lang === 'JA' ? ja : vi) || ''
-  return <span>{text}</span>
+function Bilingual({ ja, vi, langVI, furigana }: { ja?: string; vi?: string; langVI: boolean; furigana: boolean }) {
+  return (
+    <>
+      <span dangerouslySetInnerHTML={{ __html: renderWithFurigana(ja || '', furigana) }} />
+      {langVI && <><br /><span>{vi || ''}</span></>}
+    </>
+  )
 }
 
 export default function SummaryPage() {
@@ -57,7 +75,8 @@ export default function SummaryPage() {
   const [answers, setAnswers] = useState<AnswerRow[]>([])
   const [qmap, setQmap] = useState<Map<string, ReturnType<typeof toRenderableFromRaw>>>(new Map())
   const [score, setScore] = useState<{ correct: number; total: number }>({ correct: 0, total: 0 })
-  const [lang, setLang] = useState<'JA' | 'VI'>('JA')
+  const [showVI, setShowVI] = useState<boolean>(false)
+  const [showFurigana, setShowFurigana] = useState<boolean>(false)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
 
@@ -102,7 +121,10 @@ export default function SummaryPage() {
     <main style={{ padding:24, maxWidth:980, margin:'0 auto', display:'grid', gap:16 }}>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Tổng kết bài làm</h1>
-        <button className="px-3 py-1 border rounded" onClick={()=>setLang(lang==='JA'?'VI':'JA')}>JA / VI</button>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-1"><input type="checkbox" checked={showFurigana} onChange={e=>setShowFurigana(e.target.checked)} />ふりがな</label>
+          <label className="flex items-center gap-1"><input type="checkbox" checked={showVI} onChange={e=>setShowVI(e.target.checked)} />VI song ngữ</label>
+        </div>
       </div>
       <div className="font-semibold">Điểm: {score.correct} / {score.total}</div>
 
@@ -111,37 +133,45 @@ export default function SummaryPage() {
           const q = qmap.get(a.questionId)
           const ja = q?.ja
           const vi = q?.vi
-          const opts = ja?.options || []
-          const optsVI = vi?.options || []
+
+          const order = Array.isArray(a.order) && a.order.length
+            ? a.order
+            : Array.from({length: (ja?.options || []).length}, (_,i)=>i)
+
+          const shownJA = order.map(k => (ja?.options || [])[k] || {})
+          const shownVI = order.map(k => (vi?.options || [])[k] || {} as any)
+
           const picked = new Set(a.pickedIndexes || [])
           const correct = new Set(a.correctIndexes || [])
           const multi = correct.size > 1
 
-          const hasAnyOptionExplain = opts.some((op, i) => (op?.explanation || optsVI[i]?.explanation))
+          const hasAnyOptionExplain = shownJA.some((op, i) => (op?.explanation || (shownVI[i] as any)?.explanation))
 
           return (
             <div key={a.questionId} className="border rounded-lg p-3">
               <div className="font-bold mb-1">
-                Câu {idx+1} ・{a.isCorrect ? '✅ 正解' : '❌ 不正解'}{a.guessed ? ' ・(適当に選択)' : ''}
+                Câu {idx+1} ・{a.isCorrect ? '✅ 正解' : '❌ 不正解'}{a.guessed ? ' ・(適当に選択)' : ''}{a.confident ? ' ・(自信あり)' : ''}
               </div>
               <div className="mb-2">
-                <Bilingual ja={ja?.text || ''} vi={vi?.text || ''} lang={lang} />
+                <Bilingual ja={ja?.text || ''} vi={vi?.text || ''} langVI={showVI} furigana={showFurigana} />
               </div>
               {ja?.image && <img src={ja.image} alt="" style={{ maxWidth:'100%', marginBottom:8 }} />}
 
               <ul className="list-none p-0 m-0">
-                {opts.map((op, i) => {
+                {shownJA.map((op, i) => {
                   const ok = multi || correct.has(i)
                   const isPicked = picked.has(i)
                   const explainJA = op?.explanation || ''
-                  const explainVI = optsVI[i]?.explanation || ''
+                  const explainVI = (shownVI[i] as any)?.explanation || ''
                   return (
                     <li key={i} className="border rounded p-2 mb-2" style={{ background: ok ? '#ecfdf3' : isPicked ? '#fef2f2' : '#fff' }}>
-                      <div className="font-medium">{ok ? '✅' : isPicked ? '❌' : '・'}</div>
-                      <Bilingual ja={op?.text || ''} vi={optsVI[i]?.text || ''} lang={lang} />
+                      <div className="font-medium">Option {order[i] + 1}：{ok ? '✅' : isPicked ? '❌' : '・'}</div>
+                      <div>
+                        <Bilingual ja={op?.text || ''} vi={(shownVI[i] as any)?.text || ''} langVI={showVI} furigana={showFurigana} />
+                      </div>
                       {(explainJA || explainVI) && (
                         <div className="text-sm opacity-80 mt-1">
-                          <Bilingual ja={explainJA} vi={explainVI} lang={lang} />
+                          <Bilingual ja={explainJA} vi={explainVI} langVI={showVI} furigana={showFurigana} />
                         </div>
                       )}
                     </li>
@@ -152,7 +182,7 @@ export default function SummaryPage() {
               {!hasAnyOptionExplain && (ja?.explanationGeneral || vi?.explanationGeneral) && (
                 <div className="mt-2 p-2 rounded border bg-[#f8fafc] text-sm">
                   <div className="font-semibold mb-1">解説 / Lời giải</div>
-                  <Bilingual ja={ja?.explanationGeneral || ''} vi={vi?.explanationGeneral || ''} lang={lang} />
+                  <Bilingual ja={ja?.explanationGeneral || ''} vi={vi?.explanationGeneral || ''} langVI={showVI} furigana={showFurigana} />
                 </div>
               )}
 
