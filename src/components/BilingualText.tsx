@@ -20,18 +20,21 @@ export default function BilingualText({ ja, vi, lang, showFurigana, className }:
     ;(async () => {
       if (lang === 'JA') {
         const text = (ja ?? '').trim()
-        if (!text) { setHtml(''); return }
+        if (!text) { if (mounted) setHtml(''); return }
         if (showFurigana) {
           try {
             const h = await toFuriganaHtml(text)
-            if (mounted) setHtml(h || text)
+            if (mounted) setHtml(h || escapeHtml(text))
             return
-          } catch {}
+          } catch {
+            if (mounted) setHtml(escapeHtml(text))
+            return
+          }
         }
         if (mounted) setHtml(escapeHtml(text))
       } else {
         const t = (vi ?? '').trim()
-        setHtml(escapeHtml(t || (ja ?? '')))
+        if (mounted) setHtml(escapeHtml(t || (ja ?? '')))
       }
     })()
     return () => { mounted = false }

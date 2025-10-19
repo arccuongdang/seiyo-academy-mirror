@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { useEffect, useState } from 'react';
@@ -5,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { getAuth } from 'firebase/auth';
 import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession, upsertWrong } from '../../lib/analytics/attempts';
 import { loadRawQuestionsFor, loadSubjectsJson, findSubjectMeta, getCourseDisplayNameJA, getCourseDisplayNameVI } from '../../lib/qa/excel';
+import BilingualText from '../BilingualText';
 
 type Mode = 'subject' | 'year';
 type RawSnap = Record<string, any>;
@@ -83,66 +85,6 @@ function grade(selectedIndex: number | null, shownOptions: Opt[]) {
   const multiCorrect = correct.length > 1;
   const isCorrect = selectedIndex != null ? correct.includes(selectedIndex) : false;
   return { isCorrect, correctIndexes: correct, multiCorrect };
-}
-
-/** Furigana renderer:
- * - If enabled: convert Kanji(かな) / Kanji（かな） to ruby.
- * - If disabled: drop readings, keep base text.
- */
-
-function renderWithFurigana(text: string, enabled: boolean): string {
-  if (!text) return '';
-
-  // Normalize full-width parens to ASCII for easier parsing
-  const normalized = text
-    .replace(/（/g, '(')
-    .replace(/）/g, ')')
-    .replace(/《/g, '<')
-    .replace(/》/g, '>'); // temporary marker for JIS-like pattern
-
-  if (enabled) {
-    let out = normalized;
-
-    // 1) Keep existing <ruby> as-is.
-    // 2) Convert Kanji(kana) to ruby
-    out = out.replace(/([\u4E00-\u9FFF々〆ヶ]+)\(([\u3040-\u309F\u30A0-\u30FFー・]+)\)/g, (_m, kanji, yomi) =>
-      `<ruby>${kanji}<rp>(</rp><rt>${yomi}</rt><rp>)</rp></ruby>`
-    );
-
-    // 3) Convert JIS-like: ｜Kanji《kana》 -> ruby  (we normalized 《 》 to < > above)
-    out = out.replace(/(?:\uFF5C|｜)?([\u4E00-\u9FFF々〆ヶ]+)<([\u3040-\u309F\u30A0-\u30FFー・]+)>/g, (_m, kanji, yomi) =>
-      `<ruby>${kanji}<rp>(</rp><rt>${yomi}</rt><rp>)</rp></ruby>`
-    );
-
-    // 4) Convert {Kanji|kana}
-    out = out.replace(/\{([\u4E00-\u9FFF々〆ヶ]+)\|([\u3040-\u309F\u30A0-\u30FFー・]+)\}/g, (_m, kanji, yomi) =>
-      `<ruby>${kanji}<rp>(</rp><rt>${yomi}</rt><rp>)</rp></ruby>`
-    );
-
-    // 5) Convert Kanji[kana] (only when base contains CJK)
-    out = out.replace(/([\u4E00-\u9FFF々〆ヶ]+)\[([\u3040-\u309F\u30A0-\u30FFー・]+)\]/g, (_m, kanji, yomi) =>
-      `<ruby>${kanji}<rp>(</rp><rt>${yomi}</rt><rp>)</rp></ruby>`
-    );
-
-    // restore any literal angle brackets accidentally normalized for non-JIS cases
-    return out.replace(/</g, '<').replace(/>/g, '>');
-  } else {
-    // Disabled: strip ruby annotations IF present
-    //  - Existing <ruby>...<rt>yomi</rt>...</ruby> -> keep only base text(s).
-    let out = normalized
-      .replace(/<rt>[\s\S]*?<\/rt>/g, '')
-      .replace(/<rp>[\s\S]*?<\/rp>/g, '')
-      .replace(/<\/?ruby>/g, '');
-
-    // Remove readings from inline notations, keep base only
-    out = out
-      .replace(/([\u4E00-\u9FFF々〆ヶ]+)\(([\u3040-\u309F\u30A0-\u30FFー・]+)\)/g, (_m, kanji, _yomi) => String(kanji))
-      .replace(/(?:\uFF5C|｜)?([\u4E00-\u9FFF々〆ヶ]+)<([\u3040-\u309F\u30A0-\u30FFー・]+)>/g, (_m, kanji, _yomi) => String(kanji))
-      .replace(/\{([\u4E00-\u9FFF々〆ヶ]+)\|([\u3040-\u309F\u30A0-\u30FFー・]+)\}/g, (_m, kanji, _yomi) => String(kanji))
-      .replace(/([\u4E00-\u9FFF々〆ヶ]+)\[([\u3040-\u309F\u30A0-\u30FFー・]+)\]/g, (_m, kanji, _yomi) => String(kanji));
-
-    return out;
-  }
 }
 
 export default function Player(props: {
@@ -361,7 +303,7 @@ export default function Player(props: {
     <div style={{ fontWeight: 800, marginBottom: 10, lineHeight: 1.4 }}>
       {mode === 'subject' && (
         <div style={{ fontSize: 18 }}>
-          {/** 例: ２級建築士　計画 / Kiến Trúc sư cấp 2 Môn Thiết kế */}
+          {/* 例: ２級建築士　計画 / Kiến Trúc sư cấp 2 Môn Thiết kế */}
           {courseJA}　{subjectJA} / {courseVI} Môn {subjectVI || subjectId}
         </div>
       )}
@@ -422,8 +364,8 @@ export default function Player(props: {
       <div style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
         <div style={{ fontWeight: 600, marginBottom: 8 }}>
           問 {index + 1}:{' '}
-          <span dangerouslySetInnerHTML={{ __html: renderWithFurigana(q.textJA || '', showFurigana) }} />
-          {showVI && <><br /><span>{q.textVI || ''}</span></>}
+          <BilingualText ja={q.textJA || ''} vi={q.textVI || ''} lang="JA" showFurigana={showFurigana} />
+          {showVI && <><br /><BilingualText ja={q.textJA || ''} vi={q.textVI || ''} lang="VI" /></>}
         </div>
         {!!q.image && <img src={q.image} alt="" style={{ maxWidth: '100%', marginBottom: 8 }} />}
 
@@ -441,8 +383,8 @@ export default function Player(props: {
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                       <div style={{ width: 22, textAlign: 'right', paddingTop: 2 }}>{q.order[i] + 1}.</div>
                       <div style={{ flex: 1 }}>
-                        <span dangerouslySetInnerHTML={{ __html: renderWithFurigana(op.textJA || '', showFurigana) }} />
-                        {showVI && <div style={{ opacity: 0.9, marginTop: 4 }}>{op.textVI || ''}</div>}
+                        <BilingualText ja={op.textJA || ''} vi={op.textVI || ''} lang="JA" showFurigana={showFurigana} />
+                        {showVI && <div style={{ opacity: 0.9, marginTop: 4 }}><BilingualText ja={op.textJA || ''} vi={op.textVI || ''} lang="VI" /></div>}
                         {!!op.image && <img src={op.image} alt="" style={{ maxWidth: '100%', marginTop: 6 }} />}
 
                         {/* Inline explanations per option */}
@@ -451,8 +393,8 @@ export default function Player(props: {
                             <div style={{ fontWeight: 600, marginBottom: 2 }}>
                               {(isCorrect ? '★正答★　' : '')}【解説】
                             </div>
-                            <div dangerouslySetInnerHTML={{ __html: renderWithFurigana(op.explainJA || '', showFurigana) }} />
-                            {showVI && <div style={{ opacity: 0.9, marginTop: 4 }}>{op.explainVI || ''}</div>}
+                            <BilingualText ja={op.explainJA || ''} vi={op.explainVI || ''} lang="JA" showFurigana={showFurigana} />
+                            {showVI && <div style={{ opacity: 0.9, marginTop: 4 }}><BilingualText ja={op.explainJA || ''} vi={op.explainVI || ''} lang="VI" /></div>}
                           </div>
                         )}
                       </div>
