@@ -1,30 +1,32 @@
-
+// src/lib/analytics/attempts.ts
 import { getAuth } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, addDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, addDoc, serverTimestamp, updateDoc, getDoc } from 'firebase/firestore';
 
 /** Session creation */
-type CreateSessionInput = {
+export type CreateSessionInput = {
   courseId: string;
   subjectId: string;
   mode: 'subject' | 'year';
   examYear?: number;
   total: number;
 };
-type UpdateSessionInput = {
+export type UpdateSessionInput = {
   correct?: number;
   blank?: number;
 };
 
 /** Finalize payload from Player/Practice pages */
-type FinalizeInput = {
+export type FinalizeInput = {
   score: number;                 // rule: store absolute correct count
   tags?: string[];               // optional; omit if empty
   answers: Array<{
     questionId: string;
-    pickedIndexes: number[];     // indexes in the SHUFFLED space
-    correctIndexes: number[];    // indexes in the SHUFFLED space
+    pickedIndexes: number[];     // indexes in the SHOWN space
+    correctIndexes: number[];    // indexes in the SHOWN space
     isCorrect: boolean;
     guessed?: boolean;
+    confident?: boolean;
+    order?: number[];            // shownIndex -> originalIndex (optional)
   }>;
   durationSec?: number;
 };
@@ -36,6 +38,7 @@ export async function createAttemptSession(input: CreateSessionInput) {
   const db = getFirestore();
   const ref = doc(collection(db, 'users', uid, 'attemptSessions'));
   await setDoc(ref, {
+    userId: uid,
     ...input,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -61,20 +64,42 @@ export async function finalizeAttemptFromSession(sessionId: string, input: Final
   if (!uid) throw new Error('Not signed in');
 
   const db = getFirestore();
-  const attemptsCol = collection(db, 'users', uid, 'attempts');
+  const sessionsRef = doc(db, 'users', uid, 'attemptSessions', sessionId);
+  const sessionSnap = await getDoc(sessionsRef);
+  if (!sessionSnap.exists()) {
+    throw new Error('Session not found');
+  }
+  const s = sessionSnap.data() as any;
 
-  // Sanitize payload (esp. tags)
+  // Compute blank if not provided in session
+  let blank = typeof s.blank === 'number' ? s.blank : undefined;
+  if (typeof blank !== 'number') {
+    try {
+      blank = Array.isArray(input.answers) ? input.answers.filter(a => !a.pickedIndexes || a.pickedIndexes.length === 0).length : undefined;
+    } catch {}
+  }
+
+  // Build attempt payload with full metadata for MyPage
   const payload: any = {
+    userId: uid,
+    mode: s.mode,
+    courseId: s.courseId,
+    subjectId: s.subjectId,
+    examYear: s.examYear ?? null,
+    total: s.total ?? (Array.isArray(input.answers) ? input.answers.length : 0),
+    // store both "correct" and "score" for compatibility
+    correct: input.score,
     score: input.score,
+    blank: typeof blank === 'number' ? blank : 0,
+    durationSec: typeof input.durationSec === 'number' ? input.durationSec : undefined,
     answers: input.answers,
+    tags: Array.isArray(input.tags) && input.tags.length > 0 ? input.tags : undefined,
     createdAt: serverTimestamp(),
   };
-  if (Array.isArray(input.tags) && input.tags.length > 0) payload.tags = input.tags;
-  if (typeof input.durationSec === 'number') payload.durationSec = input.durationSec;
 
-  const attemptDoc = await addDoc(attemptsCol, payload);
+  const attemptDoc = await addDoc(collection(db, 'users', uid, 'attempts'), payload);
 
-  await updateDoc(doc(db, 'users', uid, 'attemptSessions', sessionId), {
+  await updateDoc(sessionsRef, {
     status: 'finalized',
     finalizedAttemptId: attemptDoc.id,
     updatedAt: serverTimestamp(),

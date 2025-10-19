@@ -1,13 +1,6 @@
 // src/app/mypage/MyPageClient.tsx
 'use client';
 
-/**
- * My Page – client-only:
- * - Dùng requireUser() để chỉ query sau khi có uid (tránh permission error).
- * - Dùng ensureDb() để ép kiểu Firestore (tránh lỗi "Firestore | null" của TS).
- * - Đọc: /users/{uid}/attempts và /users/{uid}/wrongs
- */
-
 import { useEffect, useMemo, useState } from 'react';
 import {
   collection,
@@ -22,85 +15,29 @@ import {
 } from 'firebase/firestore';
 import { db as _db, requireUser } from '../../lib/firebase/client';
 
-// ===== Firestore guard (ép kiểu an toàn chỉ ở client) =====
 function ensureDb(): Firestore {
-  if (!_db) {
-    throw new Error(
-      'Firestore is not available in this runtime. Ensure this component runs on client.'
-    );
-  }
+  if (!_db) throw new Error('Firestore is not available in this runtime');
   return _db;
 }
 
 type AttemptRow = {
   id: string;
-  userId: string;
+  userId?: string;
   mode: 'subject' | 'year';
   courseId: string;
   subjectId: string;
   examYear?: number | null;
   total: number;
-  correct: number;
+  correct: number;    // absolute correct count
   blank?: number;
   createdAt?: Timestamp;
-};
-
-type WrongRow = {
-  id: string; // questionId
-  courseId: string;
-  subjectId: string;
-  examYear?: number | null;
-  count?: number;
-  lastAt?: Timestamp;
+  answers?: Array<{ questionId: string; pickedIndexes?: number[]; isCorrect?: boolean }>;
 };
 
 export default function MyPageClient() {
   const [loading, setLoading] = useState(true);
   const [attempts, setAttempts] = useState<AttemptRow[]>([]);
-  const [wrongs, setWrongs] = useState<WrongRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
-
-  // selection for replay
-  const [selected, setSelected] = useState<Record<string, Record<string, boolean>>>({});
-
-  const groups = useMemo(() => {
-    const m = new Map<string, WrongRow[]>();
-    for (const w of wrongs) {
-      const key = `${w.courseId}::${w.subjectId}`;
-      const arr = m.get(key) || [];
-      arr.push(w);
-      m.set(key, arr);
-    }
-    return Array.from(m.entries()).map(([key, items]) => {
-      const [courseId, subjectId] = key.split('::');
-      return { key, courseId, subjectId, items };
-    });
-  }, [wrongs]);
-
-  function toggleOne(groupKey: string, qid: string) {
-    setSelected((prev) => {
-      const g = { ...(prev[groupKey] || {}) };
-      g[qid] = !g[qid];
-      return { ...prev, [groupKey]: g };
-    });
-  }
-
-  function toggleAll(groupKey: string, on: boolean) {
-    const group = groups.find((g) => g.key === groupKey);
-    if (!group) return;
-    setSelected((prev) => {
-      const g: Record<string, boolean> = {};
-      for (const w of group.items) g[w.id] = on;
-      return { ...prev, [groupKey]: g };
-    });
-  }
-
-  function selectedIdsOf(groupKey: string): string[] {
-    const g = selected[groupKey] || {};
-    return Object.entries(g)
-      .filter(([, v]) => v)
-      .map(([id]) => id);
-  }
 
   useEffect(() => {
     let mounted = true;
@@ -109,17 +46,11 @@ export default function MyPageClient() {
         setLoading(true);
         setErr(null);
 
-        const u = await requireUser(); // đợi uid
+        const u = await requireUser();
         const db = ensureDb();
 
-        // (tùy chọn) lấy thông tin user
-        try {
-          await getDoc(doc(db, 'users', u.uid));
-        } catch {
-          // ignore if user doc not exists
-        }
+        try { await getDoc(doc(db, 'users', u.uid)); } catch {}
 
-        // attempts
         const qAttempts = query(
           collection(db, 'users', u.uid, 'attempts'),
           orderBy('createdAt', 'desc'),
@@ -128,6 +59,12 @@ export default function MyPageClient() {
         const snapA = await getDocs(qAttempts);
         const rowsA: AttemptRow[] = snapA.docs.map((d) => {
           const v = d.data() as any;
+          const answers = Array.isArray(v.answers) ? v.answers : undefined;
+          const total = typeof v.total === 'number' ? v.total : (answers ? answers.length : 0);
+          const correct = typeof v.correct === 'number' ? v.correct : (typeof v.score === 'number' ? v.score : 0);
+          const blank = typeof v.blank === 'number'
+            ? v.blank
+            : (answers ? answers.filter((a: any) => !a.pickedIndexes || a.pickedIndexes.length === 0).length : undefined);
           return {
             id: d.id,
             userId: v.userId,
@@ -135,35 +72,16 @@ export default function MyPageClient() {
             courseId: v.courseId,
             subjectId: v.subjectId,
             examYear: v.examYear ?? null,
-            total: v.total ?? 0,
-            correct: v.correct ?? 0,
-            blank: v.blank ?? 0,
+            total,
+            correct,
+            blank,
             createdAt: v.createdAt,
-          };
-        });
-
-        // wrongs
-        const qWrongs = query(
-          collection(db, 'users', u.uid, 'wrongs'),
-          orderBy('lastAt', 'desc'),
-          limit(50)
-        );
-        const snapW = await getDocs(qWrongs);
-        const rowsW: WrongRow[] = snapW.docs.map((d) => {
-          const v = d.data() as any;
-          return {
-            id: d.id,
-            courseId: v.courseId,
-            subjectId: v.subjectId,
-            examYear: v.examYear ?? null,
-            count: v.count ?? 1,
-            lastAt: v.lastAt,
+            answers,
           };
         });
 
         if (!mounted) return;
         setAttempts(rowsA);
-        setWrongs(rowsW);
         setLoading(false);
       } catch (e: any) {
         if (!mounted) return;
@@ -171,9 +89,7 @@ export default function MyPageClient() {
         setLoading(false);
       }
     })();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, []);
 
   const totalSessions = attempts.length;
@@ -207,9 +123,7 @@ export default function MyPageClient() {
       const hh = String(d.getHours()).padStart(2, '0');
       const mm = String(d.getMinutes()).padStart(2, '0');
       return `${y}/${m}/${day} ${hh}:${mm}`;
-    } catch {
-      return '—';
-    }
+    } catch { return '—'; }
   };
 
   if (loading) return <main style={{ padding: 24 }}>Đang tải dữ liệu…</main>;
@@ -256,160 +170,10 @@ export default function MyPageClient() {
             </div>
           )}
         </div>
-
-        <WrongGroups
-          groups={groups}
-          selected={selected}
-          toggleAll={toggleAll}
-          toggleOne={toggleOne}
-          selectedIdsOf={selectedIdsOf}
-          formatDate={formatDate}
-        />
       </section>
 
       <RecentAttempts latest5={latest5} formatDate={formatDate} />
     </main>
-  );
-}
-
-// ====== Subcomponents (tách cho gọn) ======
-
-function WrongGroups({
-  groups,
-  selected,
-  toggleAll,
-  toggleOne,
-  selectedIdsOf,
-  formatDate,
-}: {
-  groups: { key: string; courseId: string; subjectId: string; items: WrongRow[] }[];
-  selected: Record<string, Record<string, boolean>>;
-  toggleAll: (g: string, on: boolean) => void;
-  toggleOne: (g: string, qid: string) => void;
-  selectedIdsOf: (g: string) => string[];
-  formatDate: (ts?: Timestamp) => string;
-}) {
-  return (
-    <div style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>最近の間違い / Câu sai gần đây</div>
-      {groups.length === 0 ? (
-        <div style={{ color: '#667085' }}>Không có bản ghi sai gần đây</div>
-      ) : (
-        <div style={{ display: 'grid', gap: 12 }} id="wrongs">
-          {groups.map((g) => {
-            const sel = selected[g.key] || {};
-            const allChecked = g.items.length > 0 && g.items.every((w) => sel[w.id]);
-            const anyChecked = Object.values(sel).some(Boolean);
-            const url = anyChecked
-              ? `/courses/${g.courseId}/practice/start?subject=${g.subjectId}&questionIds=${selectedIdsOf(
-                  g.key
-                ).join(',')}`
-              : undefined;
-            return (
-              <div
-                key={g.key}
-                style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12 }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    marginBottom: 8,
-                  }}
-                >
-                  <strong>
-                    {g.courseId} / {g.subjectId}
-                  </strong>
-                  <div
-                    style={{
-                      marginLeft: 'auto',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                    }}
-                  >
-                    <label
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        fontSize: 12,
-                        color: '#475467',
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={allChecked}
-                        onChange={(e) => toggleAll(g.key, e.target.checked)}
-                      />
-                      Chọn tất cả
-                    </label>
-                    <a href={url || '#'} aria-disabled={!url} style={{ textDecoration: 'none' }}>
-                      <button
-                        disabled={!url}
-                        style={{
-                          padding: '6px 10px',
-                          borderRadius: 8,
-                          border: '1px solid #175cd3',
-                          background: url ? '#175cd3' : '#93c5fd',
-                          color: '#fff',
-                          fontWeight: 700,
-                        }}
-                      >
-                        Luyện lại các câu đã chọn
-                      </button>
-                    </a>
-                  </div>
-                </div>
-
-                <ul
-                  style={{
-                    listStyle: 'none',
-                    padding: 0,
-                    margin: 0,
-                    display: 'grid',
-                    gap: 6,
-                  }}
-                >
-                  {g.items.map((w) => (
-                    <li
-                      key={w.id}
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'auto 1fr auto',
-                        alignItems: 'center',
-                        gap: 8,
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!!selected[g.key]?.[w.id]}
-                        onChange={() => toggleOne(g.key, w.id)}
-                      />
-                      <div
-                        style={{
-                          display: 'flex',
-                          gap: 8,
-                          alignItems: 'baseline',
-                          flexWrap: 'wrap',
-                        }}
-                      >
-                        <span style={{ fontWeight: 600 }}>{w.id}</span>
-                        <span style={{ color: '#667085' }}>・{w.examYear ?? '—'}年</span>
-                      </div>
-                      <div style={{ marginLeft: 'auto', color: '#475467' }}>
-                        回数 {w.count ?? 1} ・ {formatDate(w.lastAt)}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
   );
 }
 
