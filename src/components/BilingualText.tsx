@@ -1,4 +1,3 @@
-
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -41,7 +40,12 @@ export default function BilingualText({ ja, vi, lang, showFurigana, className }:
   }, [ja, vi, lang, showFurigana])
 
   if (!html) return null
-  return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />
+
+  // Gắn lang để CSS :lang(ja/vi) và font fallbacks chạy chính xác
+  if (lang === 'JA') {
+    return <span lang="ja" className={className} dangerouslySetInnerHTML={{ __html: html }} />
+  }
+  return <span lang="vi" className={className} dangerouslySetInnerHTML={{ __html: html }} />
 }
 
 function escapeHtml(s: string) {
