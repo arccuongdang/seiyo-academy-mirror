@@ -1,7 +1,7 @@
 'use client'
 
 import { useParams, useSearchParams } from 'next/navigation'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { getAuth } from 'firebase/auth'
 import { getFirestore, doc, getDoc } from 'firebase/firestore'
 import { loadSubjectsJson, listSubjectsForCourse, loadRawQuestionsFor } from '../../../../../lib/qa/excel'
@@ -29,8 +29,8 @@ function toRenderableFromRaw(raw: Snap) {
     explanationGeneral: raw.explanationGeneralVI || raw.vi?.explanation || '',
     options: [] as { text?: string; image?: string; explanation?: string }[],
   }
-  const maxN = 6
-  for (let i = 1; i <= maxN; i++) {
+
+  for (let i = 1; i <= 6; i++) {
     const tJA = raw[`option${i}TextJA`] ?? raw.ja?.options?.[i-1]?.text
     const tVI = raw[`option${i}TextVI`] ?? raw.vi?.options?.[i-1]?.text
     const img = raw[`option${i}Image`] ?? raw.ja?.options?.[i-1]?.image ?? raw.vi?.options?.[i-1]?.image
@@ -66,7 +66,7 @@ export default function SummaryPage() {
       try {
         const auth = getAuth()
         const uid = auth.currentUser?.uid
-        if (!uid || !attemptId) { setErr('Thiếu thông tin người dùng/attempt.'); return }
+        if (!uid || !attemptId) { setErr('Thiếu thông tin người dùng/attempt.'); setLoading(false); return }
         const db = getFirestore()
         const snap = await getDoc(doc(db, 'users', uid, 'attempts', attemptId))
         const data: any = snap.data() || {}
@@ -87,7 +87,7 @@ export default function SummaryPage() {
         }
         setQmap(map)
       } catch (e: any) {
-        setErr(e?.message || 'Lỗi tải dữ liệu'); 
+        setErr(e?.message || 'Lỗi tải dữ liệu')
       } finally {
         setLoading(false)
       }
@@ -121,7 +121,9 @@ export default function SummaryPage() {
 
           return (
             <div key={a.questionId} className="border rounded-lg p-3">
-              <div className="font-bold mb-1">Câu {idx+1} ・{a.isCorrect ? '✅ 正解' : '❌ 不正解'}{a.guessed ? ' ・(適当に選択)' : ''}</div>
+              <div className="font-bold mb-1">
+                Câu {idx+1} ・{a.isCorrect ? '✅ 正解' : '❌ 不正解'}{a.guessed ? ' ・(適当に選択)' : ''}
+              </div>
               <div className="mb-2">
                 <Bilingual ja={ja?.text || ''} vi={vi?.text || ''} lang={lang} />
               </div>
