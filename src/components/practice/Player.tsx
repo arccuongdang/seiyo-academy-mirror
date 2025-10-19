@@ -89,18 +89,59 @@ function grade(selectedIndex: number | null, shownOptions: Opt[]) {
  * - If enabled: convert Kanji(かな) / Kanji（かな） to ruby.
  * - If disabled: drop readings, keep base text.
  */
+
 function renderWithFurigana(text: string, enabled: boolean): string {
   if (!text) return '';
-  const pattern = /([\\u4E00-\\u9FFF々〆ヶ]+)[（(]([\\u3040-\\u309F\\u30A0-\\u30FFー・]+)[）)]/g;
+
+  // Normalize full-width parens to ASCII for easier parsing
+  const normalized = text
+    .replace(/（/g, '(')
+    .replace(/）/g, ')')
+    .replace(/《/g, '<')
+    .replace(/》/g, '>'); // temporary marker for JIS-like pattern
+
   if (enabled) {
-    return text.replace(pattern, (_m, kanji, yomi) => {
-      return `<ruby>${kanji}<rp>(</rp><rt>${yomi}</rt><rp>)</rp></ruby>`;
-    });
+    let out = normalized;
+
+    // 1) Keep existing <ruby> as-is.
+    // 2) Convert Kanji(kana) to ruby
+    out = out.replace(/([\u4E00-\u9FFF々〆ヶ]+)\(([\u3040-\u309F\u30A0-\u30FFー・]+)\)/g, (_m, kanji, yomi) =>
+      `<ruby>${kanji}<rp>(</rp><rt>${yomi}</rt><rp>)</rp></ruby>`
+    );
+
+    // 3) Convert JIS-like: ｜Kanji《kana》 -> ruby  (we normalized 《 》 to < > above)
+    out = out.replace(/(?:\uFF5C|｜)?([\u4E00-\u9FFF々〆ヶ]+)<([\u3040-\u309F\u30A0-\u30FFー・]+)>/g, (_m, kanji, yomi) =>
+      `<ruby>${kanji}<rp>(</rp><rt>${yomi}</rt><rp>)</rp></ruby>`
+    );
+
+    // 4) Convert {Kanji|kana}
+    out = out.replace(/\{([\u4E00-\u9FFF々〆ヶ]+)\|([\u3040-\u309F\u30A0-\u30FFー・]+)\}/g, (_m, kanji, yomi) =>
+      `<ruby>${kanji}<rp>(</rp><rt>${yomi}</rt><rp>)</rp></ruby>`
+    );
+
+    // 5) Convert Kanji[kana] (only when base contains CJK)
+    out = out.replace(/([\u4E00-\u9FFF々〆ヶ]+)\[([\u3040-\u309F\u30A0-\u30FFー・]+)\]/g, (_m, kanji, yomi) =>
+      `<ruby>${kanji}<rp>(</rp><rt>${yomi}</rt><rp>)</rp></ruby>`
+    );
+
+    // restore any literal angle brackets accidentally normalized for non-JIS cases
+    return out.replace(/</g, '<').replace(/>/g, '>');
   } else {
-    // remove the readings, keep base
-    return text.replace(pattern, (_m, kanji, _yomi) => String(kanji))
-               .replace(/<rp>[\s\S]*?<\/rp>/g, '')
-               .replace(/<rt>[\s\S]*?<\/rt>/g, '');
+    // Disabled: strip ruby annotations IF present
+    //  - Existing <ruby>...<rt>yomi</rt>...</ruby> -> keep only base text(s).
+    let out = normalized
+      .replace(/<rt>[\s\S]*?<\/rt>/g, '')
+      .replace(/<rp>[\s\S]*?<\/rp>/g, '')
+      .replace(/<\/?ruby>/g, '');
+
+    // Remove readings from inline notations, keep base only
+    out = out
+      .replace(/([\u4E00-\u9FFF々〆ヶ]+)\(([\u3040-\u309F\u30A0-\u30FFー・]+)\)/g, (_m, kanji, _yomi) => String(kanji))
+      .replace(/(?:\uFF5C|｜)?([\u4E00-\u9FFF々〆ヶ]+)<([\u3040-\u309F\u30A0-\u30FFー・]+)>/g, (_m, kanji, _yomi) => String(kanji))
+      .replace(/\{([\u4E00-\u9FFF々〆ヶ]+)\|([\u3040-\u309F\u30A0-\u30FFー・]+)\}/g, (_m, kanji, _yomi) => String(kanji))
+      .replace(/([\u4E00-\u9FFF々〆ヶ]+)\[([\u3040-\u309F\u30A0-\u30FFー・]+)\]/g, (_m, kanji, _yomi) => String(kanji));
+
+    return out;
   }
 }
 
