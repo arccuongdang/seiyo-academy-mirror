@@ -1,50 +1,61 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() {
+    function isSignedIn() {
       return request.auth != null;
     }
 
-    // ===== Users self-scope =====
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Minimal array check: Firestore rules don't support arrow functions / .every().
+    function isStringList(arr) {
+      return arr is list;
+    }
+
+    function isValidAttempt(d) {
+      return
+        (d.userId is string) &&
+        (d.courseId is string) &&
+        (d.subjectId is string) &&
+        (d.total is number && d.total >= 1) &&
+        (!('score' in d) || (d.score is number && d.score >= 0 && d.score <= d.total)) &&
+        (!('correct' in d) || (d.correct is number && d.correct >= 0 && d.correct <= d.total)) &&
+        (!('mode' in d) || (d.mode is string && (d.mode == 'subject' || d.mode == 'year'))) &&
+        (!('examYear' in d) || (d.examYear is number)) &&
+        (!('durationSec' in d) || (d.durationSec is number && d.durationSec >= 0)) &&
+        (!('tags' in d) || isStringList(d.tags));
+    }
+
+    // User-scoped docs
     match /users/{uid} {
-      // The owner can read and write their own user document.
-      allow read, create, update: if signedIn() && request.auth.uid == uid;
-      allow delete: if false;
+      // Profile doc (optional)
+      allow read, write: if isOwner(uid);
 
-      // Any subcollection under users/{uid} (e.g., attempts, wrongs, sessions, etc.)
-      match /{coll}/{docId} {
-        // The owner can read/write their own subcollection docs.
-        allow read, create, update: if signedIn() && request.auth.uid == uid;
-        allow delete: if false;
+      // Attempt sessions (temporary state while practicing)
+      match /attemptSessions/{sid} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Finalized attempts (per-user subcollection)
+      match /attempts/{aid} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && isValidAttempt(request.resource.data);
+        allow update, delete: if isOwner(uid) && isValidAttempt(request.resource.data);
+      }
+
+      // Wrong / flagged questions by user
+      match /wrongs/{qid} {
+        allow read, write: if isOwner(uid);
       }
     }
 
-    // ===== Courses =====
-    // Allow reading a course if public OR the user is a member: courses/{courseId}/members/{uid}
-    match /courses/{courseId} {
-      allow read: if signedIn() && (
-        resource.data.public == true ||
-        exists(/databases/$(database)/documents/courses/$(courseId)/members/$(request.auth.uid))
-      );
-      allow write: if false;
-
-      // Members subcollection: users can read their own membership doc (useful for UI)
-      match /members/{uid} {
-        allow read: if signedIn() && request.auth.uid == uid;
-        allow write: if false;
-      }
-    }
-
-    // ===== Optional top-level enrollments (if used) =====
-    // Keep this permissive for the owner to read their own enrollment rows.
-    match /enrollments/{enrId} {
-      allow read: if signedIn() && resource.data.userId == request.auth.uid;
-      allow write: if false;
-    }
-
-    // ===== Fallback: deny everything else =====
-    match /{document=**} {
+    // (Optional, reserved) — root attempts collection for future global analytics.
+    // Disabled by default.
+    match /attempts/{id} {
       allow read, write: if false;
     }
   }

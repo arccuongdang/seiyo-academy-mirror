@@ -340,7 +340,6 @@ export default function AdminDataPage() {
             for (const t of tokens) {
               if (/^\d+$/.test(t)) { ids.push(`${subjectId}-${parseInt(t, 10)}`); continue; }      // "1" → "TK-1"
               if (/^[A-Z]{1,4}-\d+$/i.test(t)) { ids.push(t.toUpperCase()); continue; }           // "TK-1"
-              // (tương lai) có thể map theo tên JA/VI từ tagsIndex
             }
             if (ids.length) tagIds = ids;
           }
@@ -425,7 +424,7 @@ export default function AdminDataPage() {
     // add index
     (manifest as any).index = buildManifestIndex(manifest.files);
     // add tagsIndex (NEW)
-    (manifest as any).tagsIndex = parseTagsIndexFromWorkbook(wb);
+    (manifest as any).tagsIndex = tagsIndex;
 
     // write manifest.json
     zip.file(`snapshots/manifest.json`, JSON.stringify(manifest, null, 2));

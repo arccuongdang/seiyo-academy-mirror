@@ -1,4 +1,4 @@
-
+// src/components/practice/Player.tsx
 'use client';
 
 import React, { useEffect, useState } from 'react';
@@ -66,7 +66,7 @@ function toViewFromRaw(raw: RawSnap) {
     const isAns = raw[`option${i}IsAnswer`];
     const eJA = raw[`option${i}ExplanationJA`];
     const eVI = raw[`option${i}ExplanationVI`];
-    if (tJA == null && tVI == null) break;
+    if (tJA == null && tVI == null && !img) break;
     opts.push({
       textJA: tJA || '',
       textVI: tVI || '',
@@ -106,9 +106,9 @@ export default function Player(props: {
   const [list, setList] = useState<ViewQuestion[]>([]);
   const [index, setIndex] = useState(0);
 
-  const [showVI, setShowVI] = useState<boolean>(false);          // VI song ngữ
-  const [showFurigana, setShowFurigana] = useState<boolean>(false); // JA furigana
-  const [showExplain, setShowExplain] = useState<boolean>(false);   // toggle inline explanations
+  const [showVI, setShowVI] = useState<boolean>(false);
+  const [showFurigana, setShowFurigana] = useState<boolean>(false);
+  const [showExplain, setShowExplain] = useState<boolean>(false);
 
   // Titles
   const [courseJA, setCourseJA] = useState<string>(courseId);
@@ -187,7 +187,7 @@ export default function Player(props: {
         setLoading(false);
       }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseId, subjectId, initialShuffle, JSON.stringify(initialTags || []), JSON.stringify(years || [])]);
 
   const goto = (i: number) => setIndex(prev => Math.max(0, Math.min(i, list.length - 1)));
@@ -250,15 +250,16 @@ export default function Player(props: {
 
     const answers = graded.map(q => ({
       questionId: q.id,
-      pickedIndexes: (q.selectedIndex == null ? [] : [q.selectedIndex]),   // in SHOWN order
-      correctIndexes: q.correctShownIndexes || [],                          // in SHOWN order
-      order: q.order,                                                       // keep permutation
+      pickedIndexes: (q.selectedIndex == null ? [] : [q.selectedIndex]),
+      correctIndexes: q.correctShownIndexes || [],
+      order: q.order,
       isCorrect: !!q._isCorrectCalc,
       guessed: !!q.guessed,
       confident: !!q.confident,
     }));
 
-    const durationSec = startedAtMs ? Math.max(1, Math.round((Date.now() - startedAtMs) / 1000)) : undefined;
+    const durationSec = startedAtMs ? Math.max(1, Math.round((Date.now() - startedAtMs) / 1000)) : 0;
+    const safeTags = Array.isArray(initialTags) ? initialTags.filter(Boolean) : [];
 
     try {
       const auth = getAuth();
@@ -269,7 +270,9 @@ export default function Player(props: {
         sid = created.sessionId; setSessionId(sid);
       }
       await updateAttemptSession(sid!, { correct, blank });
-      const { attemptId } = await finalizeAttemptFromSession(sid!, { score: correct, answers, durationSec });
+      const { attemptId } = await finalizeAttemptFromSession(sid!, { score: correct, answers, durationSec, tags: safeTags });
+      // Summary route (keep as-is)
+      // NOTE: adjust the path if your summary page differs
       router.push(`/courses/${courseId}/practice/summary?attempt=${encodeURIComponent(attemptId)}`);
     } catch (e: any) {
       console.error('[attempts] finalize failed:', e);
@@ -303,7 +306,6 @@ export default function Player(props: {
     <div style={{ fontWeight: 800, marginBottom: 10, lineHeight: 1.4 }}>
       {mode === 'subject' && (
         <div style={{ fontSize: 18 }}>
-          {/* 例: ２級建築士　計画 / Kiến Trúc sư cấp 2 Môn Thiết kế */}
           {courseJA}　{subjectJA} / {courseVI} Môn {subjectVI || subjectId}
         </div>
       )}
@@ -342,7 +344,6 @@ export default function Player(props: {
             </button>
           );
         })}
-        {/* Hiển thị vị trí câu hiện tại */}
         <div style={{ marginLeft: 'auto', fontSize: 13, opacity: 0.8 }}>{index + 1} / {list.length}</div>
       </div>
 
@@ -372,13 +373,13 @@ export default function Player(props: {
         <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {shownOpts.map((op, i) => {
             const disabled = (mode === 'year') ? q.locked : q.submitted;
-            const showThisExplain = showExplain && q.submitted; // chỉ bật khi đã nộp (A.4.a)
+            const showThisExplain = showExplain && q.submitted; // chỉ bật khi đã nộp
             const isCorrect = q.multiCorrect || correctSet.has(i);
             return (
               <li key={i} style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, marginBottom: 8, background: optBg(i) }}>
                 <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: disabled ? 'not-allowed' : 'pointer' }}>
                   <input type="radio" name={'q-' + q.id} disabled={disabled}
-                         checked={q.selectedIndex === i} onChange={() => onSelect(index, i)} style={{ marginTop: 4 }} />
+                        checked={q.selectedIndex === i} onChange={() => onSelect(index, i)} style={{ marginTop: 4 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                       <div style={{ width: 22, textAlign: 'right', paddingTop: 2 }}>{q.order[i] + 1}.</div>

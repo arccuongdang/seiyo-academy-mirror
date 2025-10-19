@@ -1,3 +1,4 @@
+// src/app/courses/[course]/practice/start/page.tsx
 'use client';
 
 import { useMemo } from 'react';
