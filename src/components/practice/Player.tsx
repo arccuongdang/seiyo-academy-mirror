@@ -1,25 +1,12 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getAuth } from 'firebase/auth';
 import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession, upsertWrong } from '../../lib/analytics/attempts';
 import { loadRawQuestionsFor, loadSubjectsJson, findSubjectMeta, getCourseDisplayNameJA, getCourseDisplayNameVI } from '../../lib/qa/excel';
 
-function renderWithFurigana(text: string, enabled: boolean): string {
-  if (!text) return '';
-  // If disabled, strip <rt>/<rp> to hide furigana in existing ruby markup.
-  if (!enabled) {
-    return text.replace(/<rp>.*?<\/rp>/g, '').replace(/<rt>.*?<\/rt>/g, '');
-  }
-  // Enabled: return as-is (assumes snapshot may already contain ruby markup).
-  return text;
-}
-
-
-
 type Mode = 'subject' | 'year';
-
 type RawSnap = Record<string, any>;
 
 type Opt = {
@@ -98,6 +85,25 @@ function grade(selectedIndex: number | null, shownOptions: Opt[]) {
   return { isCorrect, correctIndexes: correct, multiCorrect };
 }
 
+/** Furigana renderer:
+ * - If enabled: convert Kanji(かな) / Kanji（かな） to ruby.
+ * - If disabled: drop readings, keep base text.
+ */
+function renderWithFurigana(text: string, enabled: boolean): string {
+  if (!text) return '';
+  const pattern = /([\\u4E00-\\u9FFF々〆ヶ]+)[（(]([\\u3040-\\u309F\\u30A0-\\u30FFー・]+)[）)]/g;
+  if (enabled) {
+    return text.replace(pattern, (_m, kanji, yomi) => {
+      return `<ruby>${kanji}<rp>(</rp><rt>${yomi}</rt><rp>)</rp></ruby>`;
+    });
+  } else {
+    // remove the readings, keep base
+    return text.replace(pattern, (_m, kanji, _yomi) => String(kanji))
+               .replace(/<rp>[\s\S]*?<\/rp>/g, '')
+               .replace(/<rt>[\s\S]*?<\/rt>/g, '');
+  }
+}
+
 export default function Player(props: {
   courseId: string;
   subjectId: string;
@@ -117,8 +123,9 @@ export default function Player(props: {
   const [list, setList] = useState<ViewQuestion[]>([]);
   const [index, setIndex] = useState(0);
 
-  const [showVI, setShowVI] = useState<boolean>(false);          // VI song song
+  const [showVI, setShowVI] = useState<boolean>(false);          // VI song ngữ
   const [showFurigana, setShowFurigana] = useState<boolean>(false); // JA furigana
+  const [showExplain, setShowExplain] = useState<boolean>(false);   // toggle inline explanations
 
   // Titles
   const [courseJA, setCourseJA] = useState<string>(courseId);
@@ -312,12 +319,13 @@ export default function Player(props: {
   const titleLine = (
     <div style={{ fontWeight: 800, marginBottom: 10, lineHeight: 1.4 }}>
       {mode === 'subject' && (
-        <div style={{ fontSize: 18 }}>{/* A.1 */}
+        <div style={{ fontSize: 18 }}>
+          {/** 例: ２級建築士　計画 / Kiến Trúc sư cấp 2 Môn Thiết kế */}
           {courseJA}　{subjectJA} / {courseVI} Môn {subjectVI || subjectId}
         </div>
       )}
       {mode === 'year' && (
-        <div style={{ fontSize: 18 }}>{/* D.1 */}
+        <div style={{ fontSize: 18 }}>
           {courseJA}　{subjectJA} / {courseVI} Môn {subjectVI || subjectId}
           {typeof q.examYear === 'number' && !Number.isNaN(q.examYear) ? `＿　${q.examYear}年 問題` : ''}
         </div>
@@ -329,7 +337,8 @@ export default function Player(props: {
     <main style={{ padding: 24, maxWidth: 1000, margin: '0 auto' }}>
       {titleLine}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 12px' }}>
+      {/* Thanh nhảy câu */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 8px' }}>
         {list.map((qq, i) => {
           const isBlank = qq.selectedIndex == null;
           const isWrong = qq.submitted && !qq.multiCorrect && qq.correctShownIndexes.length && !(qq.correctShownIndexes.includes(qq.selectedIndex ?? -999));
@@ -344,16 +353,19 @@ export default function Player(props: {
             else if (isBlank) { bg = '#fff'; bd = '#e5e7eb'; }
           }
           return (
-            <button key={qq.id} onClick={() => goto(i)}
+            <button key={qq.id} onClick={() => setIndex(i)}
               style={{ width: 34, height: 30, borderRadius: 6, border: `1px solid ${bd}`, background: bg, fontSize: 12, cursor: 'pointer' }}>
               {i + 1}
             </button>
           );
         })}
+        {/* Hiển thị vị trí câu hiện tại */}
+        <div style={{ marginLeft: 'auto', fontSize: 13, opacity: 0.8 }}>{index + 1} / {list.length}</div>
       </div>
 
+      {/* Controls: Furigana + song ngữ */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-        <div style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10 }}>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <input type="checkbox" checked={showFurigana} onChange={e => setShowFurigana(e.target.checked)} />
             ふりがな
@@ -365,6 +377,7 @@ export default function Player(props: {
         </div>
       </div>
 
+      {/* Thân đề */}
       <div style={{ border: '1px solid #eee', borderRadius: 12, padding: 16 }}>
         <div style={{ fontWeight: 600, marginBottom: 8 }}>
           問 {index + 1}:{' '}
@@ -376,6 +389,8 @@ export default function Player(props: {
         <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {shownOpts.map((op, i) => {
             const disabled = (mode === 'year') ? q.locked : q.submitted;
+            const showThisExplain = showExplain && q.submitted; // chỉ bật khi đã nộp (A.4.a)
+            const isCorrect = q.multiCorrect || correctSet.has(i);
             return (
               <li key={i} style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, marginBottom: 8, background: optBg(i) }}>
                 <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: disabled ? 'not-allowed' : 'pointer' }}>
@@ -388,6 +403,17 @@ export default function Player(props: {
                         <span dangerouslySetInnerHTML={{ __html: renderWithFurigana(op.textJA || '', showFurigana) }} />
                         {showVI && <div style={{ opacity: 0.9, marginTop: 4 }}>{op.textVI || ''}</div>}
                         {!!op.image && <img src={op.image} alt="" style={{ maxWidth: '100%', marginTop: 6 }} />}
+
+                        {/* Inline explanations per option */}
+                        {showThisExplain && (op.explainJA || op.explainVI) && (
+                          <div style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#f8fafc', border: '1px dashed #cbd5e1' }}>
+                            <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                              {(isCorrect ? '★正答★　' : '')}【解説】
+                            </div>
+                            <div dangerouslySetInnerHTML={{ __html: renderWithFurigana(op.explainJA || '', showFurigana) }} />
+                            {showVI && <div style={{ opacity: 0.9, marginTop: 4 }}>{op.explainVI || ''}</div>}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -397,7 +423,8 @@ export default function Player(props: {
           })}
         </ul>
 
-        <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {/* Hàng nút hành động */}
+        <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           {mode === 'year' ? (
             <>
               <button onClick={() => lockOneYear(index)} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #334155', background: '#fff', color: '#334155', fontWeight: 700 }}>
@@ -418,25 +445,26 @@ export default function Player(props: {
               <button onClick={submitAll} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #175cd3', background: '#175cd3', color: '#fff', fontWeight: 700 }}>
                 テスト終了 / Nộp bài
               </button>
-              <details style={{ marginLeft: 'auto' }}>
-                <summary style={{ cursor: 'pointer' }}>解説 / Giải thích</summary>
-                <div style={{ marginTop: 8, padding: 8, border: '1px dashed #cbd5e1', borderRadius: 8 }}>
-                  {shownOpts.map((op, i) => {
-                    const expJA = op.explainJA || '';
-                    const expVI = op.explainVI || '';
-                    if (!expJA && !expVI) return null;
-                    return (
-                      <div key={i} style={{ marginBottom: 8 }}>
-                        <div style={{ fontWeight: 600, marginBottom: 4 }}>Option {q.order[i] + 1}</div>
-                        <div dangerouslySetInnerHTML={{ __html: renderWithFurigana(expJA, showFurigana) }} />
-                        {showVI && <div style={{ opacity: 0.9, marginTop: 4 }}>{expVI}</div>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </details>
+              {/* Giải thích toggle: chỉ bật được khi đã nộp */}
+              <button
+                onClick={() => setShowExplain(v => !v)}
+                disabled={!list[index]?.submitted}
+                style={{ marginLeft: 'auto', padding: '10px 14px', borderRadius: 8, border: '1px solid #64748b', background: '#fff', color: '#334155', fontWeight: 700, opacity: list[index]?.submitted ? 1 : 0.5 }}
+              >
+                解説 / Giải thích {showExplain ? 'ON' : 'OFF'}
+              </button>
             </>
           )}
+        </div>
+
+        {/* Footer: vị trí + Next */}
+        <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 13, opacity: 0.8 }}>Câu hiện tại: {index + 1} / {list.length}</div>
+          <button onClick={() => setIndex(i => Math.min(i + 1, list.length - 1))}
+                  disabled={index === list.length - 1}
+                  style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #ddd', background: '#fff' }}>
+            次へ / Tiếp
+          </button>
         </div>
       </div>
     </main>
