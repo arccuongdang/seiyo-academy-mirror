@@ -154,8 +154,28 @@ export default function SummaryPage() {
           const order = (a.order && a.order.length === options.length) ? a.order : Array.from({ length: options.length }, (_, i) => i);
           const shown = order.map(k => options[k]);
 
-          const pickedSet = new Set(a.pickedIndexes || []);
-          const correctSet = new Set(a.correctIndexes || []);
+          let pickedIdxs = Array.isArray(a.pickedIndexes) ? a.pickedIndexes.slice() : [];
+          let correctIdxs = Array.isArray(a.correctIndexes) ? a.correctIndexes.slice() : [];
+          
+          // 1) Nếu thiếu correctIndexes → suy ra từ snapshot (isAnswer) theo thứ tự "shown"
+          if (!correctIdxs.length) {
+            correctIdxs = shown
+              .map((op, i) => (op.isAnswer ? i : -1))
+              .filter(i => i >= 0);
+          }
+
+          // 2) Nếu pickedIndexes có vẻ là "original index" (vượt quá biên shown) → map sang "shown index"
+          if (pickedIdxs.some(i => i >= shown.length) && Array.isArray(a.order) && a.order.length === shown.length) {
+            // a.order: shownIndex -> originalIndex
+            // cần map ngược originalIndex -> shownIndex
+            const originalToShown = new Map<number, number>(a.order.map((origIdx, shownIdx) => [origIdx, shownIdx]));
+            pickedIdxs = pickedIdxs
+              .map(orig => originalToShown.get(orig))
+              .filter((x): x is number => typeof x === 'number');
+          }
+
+          const pickedSet = new Set(pickedIdxs);
+          const correctSet = new Set(correctIdxs);
 
           const anyOptHasExplanation = shown.some(op => (op.explainJA && op.explainJA.trim()) || (op.explainVI && op.explainVI.trim()));
           const generalJA = raw.explanationGeneralJA || '';
