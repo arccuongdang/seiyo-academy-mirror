@@ -4,18 +4,24 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import {
   loadSubjectsJson, listYearsForSubject, listSubjectsForYear,
-  findSubjectMeta, getCourseDisplayNameJA, eraJP
+  findSubjectMeta, getCourseDisplayNameJA, eraJP, loadRawQuestionsFor
 } from '../../../../lib/qa/excel'
 
 type ThinSubject = { subjectId: string; nameJA?: string; nameVI?: string }
-type TagDef = { id: string; nameJA?: string; nameVI?: string }
 
-async function tryLoadTagsIndex(): Promise<Record<string, Record<string, TagDef[]>> | null> {
-  try {
-    const res = await fetch('/snapshots/tags-index.json', { cache: 'no-store' })
-    if (!res.ok) return null
-    return await res.json()
-  } catch { return null }
+function collectTagsFromSnapshot(items: any[]): string[] {
+  const set = new Set<string>()
+  for (const it of items || []) {
+    const raw = (it?.tags ?? '').toString().trim()
+    if (!raw) continue
+    const parts = raw
+      .replace(/[、;|]/g, ',')
+      .split(',')
+      .map((s: string) => s.trim())
+      .filter(Boolean)
+    for (const p of parts) set.add(p)
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'ja'))
 }
 
 export default function FilterPage() {
@@ -31,7 +37,7 @@ export default function FilterPage() {
   const [availableYears, setAvailableYears] = useState<number[]>([])
   const [availableSubjects, setAvailableSubjects] = useState<ThinSubject[]>([])
   const [pickedTags, setPickedTags] = useState<string[]>([])
-  const [tagsIndex, setTagsIndex] = useState<Record<string, Record<string, TagDef[]>> | null>(null)
+  const [subjectTags, setSubjectTags] = useState<string[]>([])
   const [yearMode, setYearMode] = useState<'recent5'|'recent10'|'custom'|null>(null)
   const [customYears, setCustomYears] = useState<number[]>([])
   const [shuffle, setShuffle] = useState<boolean>(mode === 'year') // default ON for year, OFF for subject
@@ -43,6 +49,7 @@ export default function FilterPage() {
 
   const courseJA = useMemo(() => getCourseDisplayNameJA(courseId, subjectsJson) || courseId, [courseId, subjectsJson])
 
+  // Load basic lists
   useEffect(() => {
     (async () => {
       const sj = await loadSubjectsJson()
@@ -55,10 +62,22 @@ export default function FilterPage() {
         const subs = await listSubjectsForYear(courseId, lockedYear, sj)
         setAvailableSubjects(subs || [])
       }
-      const ti = await tryLoadTagsIndex()
-      setTagsIndex(ti)
     })()
   }, [courseId, mode, subjectId, lockedYear])
+
+  // Build tags dynamically (SUBJECT MODE ONLY)
+  useEffect(() => {
+    (async () => {
+      if (mode !== 'subject' || !subjectId) { setSubjectTags([]); return }
+      try {
+        const raws = await loadRawQuestionsFor(courseId, subjectId)
+        const tags = collectTagsFromSnapshot(raws || [])
+        setSubjectTags(tags)
+      } catch {
+        setSubjectTags([])
+      }
+    })()
+  }, [courseId, subjectId, mode])
 
   function toggleIn<T extends string|number>(arr: T[], v: T): T[] {
     const s = new Set(arr)
@@ -73,11 +92,6 @@ export default function FilterPage() {
     if (yearMode === 'custom') return [...customYears].sort((a,b)=>b-a)
     return sorted
   }, [availableYears, yearMode, customYears])
-
-  const selectedYearSubjectId = useMemo(() => {
-    const el = typeof document !== 'undefined' ? (document.querySelector('input[name="subpick"]:checked') as HTMLInputElement | null) : null
-    return el?.value
-  }, [availableSubjects.length])
 
   function startPractice() {
     const q = new URLSearchParams()
@@ -95,19 +109,12 @@ export default function FilterPage() {
     q.set('subject', selected)
     q.set('year', String(lockedYear))
     if (shuffle) q.set('shuffle', '1') // default ON
-    if (pickedTags.length) q.set('tags', pickedTags.join(','))
     location.assign(`/courses/${encodeURIComponent(courseId)}/practice/year?${q.toString()}`)
   }
 
   const title = mode === 'year' && lockedYear
     ? `出題_${lockedYear}年（${eraJP(lockedYear)}） / Bộ Lọc Đề_ Năm ${lockedYear} (${eraJP(lockedYear)})`
     : `出題 – ${courseJA} – ${subjectMeta?.nameJA || subjectId || ''} / Bộ lọc – ${courseId} – ${subjectMeta?.nameJA || subjectId || ''}`
-
-  const activeSubjectIdForTags = mode === 'subject' ? subjectId : selectedYearSubjectId || undefined
-  const tagDefs: TagDef[] =
-    (activeSubjectIdForTags && tagsIndex?.[courseId]?.[activeSubjectIdForTags])
-      ? tagsIndex![courseId]![activeSubjectIdForTags]!
-      : []
 
   return (
     <main style={{ padding: 24, maxWidth: 980, margin: '0 auto', display: 'grid', gap: 16 }}>
@@ -119,7 +126,7 @@ export default function FilterPage() {
           <div style={{ display:'grid', gap:8 }}>
             {availableSubjects.map(s => (
               <label key={s.subjectId} className="flex items-center gap-2">
-                <input type="radio" name="subpick" value={s.subjectId} onChange={() => { /* trigger re-render via state setters */ setPickedTags([]); setShuffle(true); }} defaultChecked={false} />
+                <input type="radio" name="subpick" value={s.subjectId} defaultChecked={false} />
                 <span>{s.nameJA || s.subjectId}{s.nameVI ? <span style={{color:'#64748b'}}> / {s.nameVI}</span> : null}</span>
               </label>
             ))}
@@ -153,7 +160,7 @@ export default function FilterPage() {
         </section>
       )}
 
-      {/* Shuffle toggle */}
+      {/* Shuffle toggle (ALWAYS visible; default ON in year-mode, OFF in subject-mode) */}
       <section className="border rounded-lg p-4">
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={shuffle} onChange={e=>setShuffle(e.target.checked)} />
@@ -161,29 +168,27 @@ export default function FilterPage() {
         </label>
       </section>
 
-      {/* Tags box */}
-      <section className="border rounded-lg p-4">
-        <div className="font-bold mb-2">Tags</div>
-        {activeSubjectIdForTags ? (
-          tagDefs.length ? (
+      {/* Tags box — SUBJECT MODE ONLY */}
+      {mode === 'subject' && (
+        <section className="border rounded-lg p-4">
+          <div className="font-bold mb-2">Tags</div>
+          {subjectTags.length ? (
             <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
-              {tagDefs.map(t => {
-                const checked = pickedTags.includes(t.id)
+              {subjectTags.map((t) => {
+                const checked = pickedTags.includes(t)
                 return (
-                  <label key={t.id} className="px-2 py-1 border rounded cursor-pointer" style={{ background: checked ? '#111' : '#fff', color: checked ? '#fff' : '#111' }}>
-                    <input type="checkbox" className="mr-2" checked={checked} onChange={() => setPickedTags(prev => toggleIn(prev, t.id))} />
-                    <span>{t.nameJA || t.id}{t.nameVI ? ` / ${t.nameVI}` : ''}</span>
+                  <label key={t} className="px-2 py-1 border rounded cursor-pointer" style={{ background: checked ? '#111' : '#fff', color: checked ? '#fff' : '#111' }}>
+                    <input type="checkbox" className="mr-2" checked={checked} onChange={() => setPickedTags(prev => toggleIn(prev, t))} />
+                    <span>{t}</span>
                   </label>
                 )
               })}
             </div>
           ) : (
-            <div className="text-gray-500">Chưa có Tag cho môn này (tags-index.json chưa được xuất).</div>
-          )
-        ) : (
-          <div className="text-gray-500">Hãy chọn môn để hiện Tags.</div>
-        )}
-      </section>
+            <div className="text-gray-500">Môn này chưa có tag nào trong dữ liệu snapshot.</div>
+          )}
+        </section>
+      )}
 
       <div style={{ display:'flex', gap:12, alignItems:'stretch' }}>
         <section className="border rounded-lg p-4" style={{ borderColor:'#175cd3', background:'#e8f1ff', flex:1 }}>
@@ -205,7 +210,7 @@ export default function FilterPage() {
               </li>
             )}
             <li>Shuffle: {shuffle ? 'ON' : 'OFF'}</li>
-            {!!pickedTags.length && <li>Tags: {pickedTags.join(', ')}</li>}
+            {mode==='subject' && !!pickedTags.length && <li>Tags: {pickedTags.join(', ')}</li>}
           </ul>
         </section>
         <div className="flex items-center">
