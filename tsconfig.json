@@ -18,8 +18,9 @@
     "incremental": true,
     "baseUrl": "src",
     "paths": {
-      "@/*": ["*"]
-
+      "@/*": [
+        "*"
+      ]
     },
     "esModuleInterop": true,
     "plugins": [
@@ -29,13 +30,23 @@
     ]
   },
   "include": [
-    "**/*.ts",
-    "**/*.tsx",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "lib/**/*.ts",
+    "lib/**/*.tsx",
     "next-env.d.ts",
-    "src/types/**/*.d.ts",
+    "pages/**/*.ts",
+    "pages/**/*.tsx",
+    "scripts/**/*.ts",
+    "scripts/**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
     ".next/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "functions"
   ]
 }

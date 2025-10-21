@@ -44,3 +44,7 @@ next-env.d.ts
 
 #Đảm bảo dictionary lên repo
 !public/kuromoji/dict/**
+
+
+node_modules/
+.next/
