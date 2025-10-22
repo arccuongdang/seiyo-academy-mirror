@@ -1,10 +1,9 @@
-
 /**
  * Snapshots helpers (patched):
  * - Works even if subjects.json has NO `courses` array (infers from `items[]`)
  * - getCourseDisplayNameJA/VI fall back to a local mapping (KTS2)
+ * - Added TF-safe validate helpers to avoid EMPTY_OPTIONS for TF rows
  */
-
 import type {
   SnapshotManifest,
   SubjectsJSON,
@@ -12,14 +11,12 @@ import type {
   TagsIndex,
   TagDef,
 } from './schema';
-
 export type ThinCourse = {
   courseId: string;
   courseNameJA?: string;
   courseNameVI?: string;
   active?: boolean;
 };
-
 export type ThinSubjectsItem = {
   courseId: string;
   subjectId: string;
@@ -29,61 +26,50 @@ export type ThinSubjectsItem = {
   descriptionVI?: string;
   order?: number;
 };
-
 const SNAPSHOT_BASE = '/snapshots';
 const manifestCache: { value: SnapshotManifest | null } = { value: null };
 const subjectsCache: { value: SubjectsJSON | null } = { value: null };
 const rawCache = new Map<string, QuestionSnapshotItem[]>();
-
 /** Optional fallback names if Courses sheet is absent */
 const COURSE_NAME_MAP: Record<string, { JA: string; VI?: string }> = {
   KTS2: { JA: '２級建築士', VI: 'Kiến trúc sư cấp 2' },
-  // Add more defaults if needed
 };
-
 async function fetchJSON<T = any>(path: string): Promise<T> {
   const res = await fetch(path, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Fetch failed ${path}: ${res.status} ${res.statusText}`);
   return (await res.json()) as T;
 }
-
 export async function loadManifest(): Promise<SnapshotManifest> {
   if (manifestCache.value) return manifestCache.value;
   const data = await fetchJSON<SnapshotManifest>(`${SNAPSHOT_BASE}/manifest.json`);
   manifestCache.value = data;
   return data;
 }
-
 export async function loadSubjectsJson(): Promise<SubjectsJSON> {
   if (subjectsCache.value) return subjectsCache.value;
   const data = await fetchJSON<SubjectsJSON>(`${SNAPSHOT_BASE}/subjects.json`);
   subjectsCache.value = data;
   return data;
 }
-
 /** Era labels */
 export function eraJP(year: number): string {
-  if (year >= 2019) return `R${year - 2018}`;      // Reiwa
-  if (year >= 1989) return `H${year - 1988}`;      // Heisei
-  if (year >= 1926) return `S${year - 1925}`;      // Showa
+  if (year >= 2019) return `R${year - 2018}`;
+  if (year >= 1989) return `H${year - 1988}`;
+  if (year >= 1926) return `S${year - 1925}`;
   return `${year}`;
 }
-
 /** Courses */
 function coerceBool(v: any): boolean {
   if (v === true) return true;
   const s = String(v || '').trim().toUpperCase();
   return s === 'TRUE' || s === '1' || s === 'YES';
 }
-
 /**
  * Prefer sj.courses when present; otherwise infer from sj.items[] (subjects list).
- * Inferred courses are considered active=true and get names from fallback map.
  */
 export function listActiveCourses(subjectsJson?: SubjectsJSON | null): ThinCourse[] {
   const sj: any = subjectsJson || subjectsCache.value || {};
   const out: ThinCourse[] = [];
-
   if (Array.isArray(sj.courses) && sj.courses.length > 0) {
     for (const r of sj.courses) {
       const active = coerceBool(r?.active ?? true);
@@ -97,8 +83,6 @@ export function listActiveCourses(subjectsJson?: SubjectsJSON | null): ThinCours
     }
     return out;
   }
-
-  // Fallback: infer unique courseIds from items[]
   const items: any[] = Array.isArray(sj.items) ? sj.items : [];
   const uniq = Array.from(new Set(items.map(it => String(it.courseId))).values());
   for (const courseId of uniq) {
@@ -111,7 +95,6 @@ export function listActiveCourses(subjectsJson?: SubjectsJSON | null): ThinCours
   }
   return out;
 }
-
 export function getCourseDisplayNameJA(courseId: string, subjectsJson?: SubjectsJSON | null): string | null {
   const list = listActiveCourses(subjectsJson);
   const hit = list.find(c => c.courseId === courseId);
@@ -122,7 +105,6 @@ export function getCourseDisplayNameVI(courseId: string, subjectsJson?: Subjects
   const hit = list.find(c => c.courseId === courseId);
   return (hit?.courseNameVI || COURSE_NAME_MAP[courseId]?.VI || null);
 }
-
 /** Subjects */
 export function listSubjectsForCourse(courseId: string, subjectsJson: SubjectsJSON): ThinSubjectsItem[] {
   const items = (subjectsJson.items || []).filter((it: any) => it.courseId === courseId);
@@ -142,7 +124,6 @@ export function listSubjectsForCourse(courseId: string, subjectsJson: SubjectsJS
     return a.subjectId.localeCompare(b.subjectId);
   });
 }
-
 export function findSubjectMeta(
   courseId: string,
   subjectId: string,
@@ -162,11 +143,8 @@ export function findSubjectMeta(
       }
     : null;
 }
-
 /* Snapshot & raw loaders */
-
 type ThinManifestFileEntry = { courseId: string; subjectId: string; path: string; version?: number; };
-
 function collectFilesFor(courseId: string, subjectId: string, manifest: SnapshotManifest): ThinManifestFileEntry[] {
   const files = (manifest.files || []) as any[];
   const filtered = files.filter((f) => f.courseId === courseId && f.subjectId === subjectId);
@@ -177,24 +155,20 @@ function collectFilesFor(courseId: string, subjectId: string, manifest: Snapshot
     version: typeof f.version === 'number' ? f.version : undefined,
   }));
 }
-
 export function selectLatestFile(courseId: string, subjectId: string, manifest: SnapshotManifest): ThinManifestFileEntry | null {
   const files = collectFilesFor(courseId, subjectId, manifest);
   if (!files.length) return null;
   files.sort((a, b) => (b.version ?? 0) - (a.version ?? 0));
   return files[0];
 }
-
 async function fetchJSONSnapshot<T = any>(url: string): Promise<T> {
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Fetch failed: ${url}`);
   return res.json() as Promise<T>;
 }
-
 export async function loadRawQuestionsFor(courseId: string, subjectId: string): Promise<QuestionSnapshotItem[]> {
   const cacheKey = `${courseId}:${subjectId}`;
   if (rawCache.has(cacheKey)) return rawCache.get(cacheKey)!;
-
   const manifest = await loadManifest();
   const file = selectLatestFile(courseId, subjectId, manifest);
   if (!file) {
@@ -208,11 +182,9 @@ export async function loadRawQuestionsFor(courseId: string, subjectId: string): 
     : Array.isArray((data as any).items)
     ? ((data as any).items as QuestionSnapshotItem[])
     : [];
-
   rawCache.set(cacheKey, arr);
   return arr;
 }
-
 export async function listYearsForSubject(courseId: string, subjectId: string): Promise<number[]> {
   const raws = await loadRawQuestionsFor(courseId, subjectId);
   const set = new Set<number>();
@@ -222,7 +194,6 @@ export async function listYearsForSubject(courseId: string, subjectId: string): 
   }
   return Array.from(set).sort((a, b) => b - a);
 }
-
 export async function listSubjectsForYear(courseId: string, year: number, subjectsJson?: SubjectsJSON): Promise<ThinSubjectsItem[]> {
   const sj = subjectsJson ?? (await loadSubjectsJson());
   const subjects = listSubjectsForCourse(courseId, sj);
@@ -233,7 +204,6 @@ export async function listSubjectsForYear(courseId: string, year: number, subjec
   }
   return result;
 }
-
 export async function listAvailableYearsForCourse(courseId: string, subjectsJson?: SubjectsJSON): Promise<number[]> {
   const sj = subjectsJson ?? (await loadSubjectsJson());
   const subjects = listSubjectsForCourse(courseId, sj);
@@ -244,18 +214,14 @@ export async function listAvailableYearsForCourse(courseId: string, subjectsJson
   }
   return Array.from(set).sort((a, b) => b - a);
 }
-
 /* Admin: TagsIndex helpers */
-
 import * as XLSX from 'xlsx';
 export type TagDefLocal = TagDef;
 export type TagsIndexLocal = TagsIndex;
-
 export function buildTagsIndexFromSheet(ws: XLSX.WorkSheet): TagsIndex {
   const rows = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' }) as string[][];
   const H = rows.length;
   const W = Math.max(...rows.map(r => r.length));
-
   type Col = { course: string; subject: string; lang: string; j: number };
   const cols: Col[] = [];
   for (let j = 0; j < W; j++) {
@@ -266,7 +232,6 @@ export function buildTagsIndexFromSheet(ws: XLSX.WorkSheet): TagsIndex {
     if (subject.toLowerCase() === 'no') continue;
     cols.push({ course, subject, lang, j });
   }
-
   const groups = new Map<string, { ja?: Col; vi?: Col }>();
   for (const c of cols) {
     const key = `${c.course}__${c.subject}`;
@@ -275,7 +240,6 @@ export function buildTagsIndexFromSheet(ws: XLSX.WorkSheet): TagsIndex {
     if (c.lang === 'JV' || c.lang === 'VI') g.vi = c;
     groups.set(key, g);
   }
-
   const out: TagsIndex = {};
   for (const [key, g] of groups) {
     const [courseId, subjectId] = key.split('__');
@@ -292,14 +256,33 @@ export function buildTagsIndexFromSheet(ws: XLSX.WorkSheet): TagsIndex {
   }
   return out;
 }
-
 export function parseTagsIndexFromWorkbook(wb: XLSX.WorkBook): TagsIndex {
   const ws = wb.Sheets['TagsList'] || wb.Sheets['Taglists'];
   return ws ? buildTagsIndexFromSheet(ws) : {};
 }
-
 export function pickTagIdsFromIndex(tagsIndex: TagsIndex | null | undefined, courseId: string, subjectId: string): string[] {
   const arr = tagsIndex?.[courseId]?.[subjectId];
   if (!Array.isArray(arr)) return [];
   return arr.map(t => String(t.id)).filter(Boolean);
+}
+/* ==================== Validate helpers (to bypass EMPTY_OPTIONS for TF) ==================== */
+export function isTFRow(row: any): boolean {
+  const qtRaw = row?.questionType ?? row?.QuestionType ?? row?.type ?? row?.Type ?? '';
+  const norm = String(qtRaw).toUpperCase().replace(/\s|_/g, '');
+  return norm === 'TF' || norm === 'TRUEFALSE' || norm === 'TRUE/FALSE' || norm === 'T/F';
+}
+export function hasAnyOptionFromExcel(row: any): boolean {
+  const pick = (k: string) => row?.[k] ?? row?.[k[0].toUpperCase() + k.slice(1)];
+  const any = (i: number) =>
+    !!pick(`option${i}TextJA`) || !!pick(`option${i}TextVI`) || !!pick(`option${i}Image`);
+  for (let i = 1; i <= 5; i++) if (any(i)) return true;
+  return false;
+}
+/**
+ * Use this in your Admin validate step:
+ *   if (shouldReportEmptyOptions(row)) errors.push(`[EMPTY_OPTIONS] ${row.questionId}: No options found.`)
+ */
+export function shouldReportEmptyOptions(row: any): boolean {
+  if (isTFRow(row)) return false; // TF được auto-generate options ở formatter
+  return !hasAnyOptionFromExcel(row);
 }
