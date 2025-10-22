@@ -1,42 +1,11 @@
 "use client";
 
-/**
- * =============================================================================
- *  Admin — Data Publisher (Excel → Validate → Export RAW snapshots ZIP)
- *  Strategy: Option B (RAW JA/VI, fixed 5 options)
- * -----------------------------------------------------------------------------
- *  Flow:
- *   [TAB 1] Publish
- *    1) Upload Excel (Subjects, Questions, TagsList)
- *    2) Chuẩn hoá & lọc READY
- *    3) Validate (multi-correct: OK, nếu MCQ >1 correct → báo lỗi theo guards của bạn)
- *    4) Xuất ZIP:
- *         - snapshots/subjects.json
- *         - snapshots/manifest.json
- *           * giữ `files: [{path, courseId, subjectId, version}]`
- *           * có `index[courseId][subjectId].{versions[], latest}`
- *           * NEW: `tagsIndex` (đọc từ sheet TagsList)
- *         - snapshots/{course}/{subject}-questions.v{ts}.json
- *         - snapshots/{course}/{subject}-questions.latest.json (alias)
- *         - publish.sh (tuỳ chọn) — git add/commit/push
- *
- *   [TAB 2] Images Check (không upload)
- *    - Chọn folder ảnh cục bộ (webkitdirectory)
- *    - So sánh thiếu/không dùng theo quy ước path
- *
- *  Lịch sử thay đổi:
- *   - v3: + TagsList parser → manifest.tagsIndex; map `row.tags` → tagId[]
- *   - v2: + alias *.latest.json; + Tab Images Check; + publish.sh trong ZIP
- *   - v1: Publish ZIP (subjects/manifest/snapshots)
- * =============================================================================
- */
-
 import React, { useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
-// ==== Libs giữ nguyên theo dự án của bạn ====
+// Libs (giữ nguyên theo dự án của bạn)
 import { buildSubjectsMeta } from "../../../lib/qa/normalize";
 import { validateQuestions } from "../../../lib/qa/guards";
 import type {
@@ -47,12 +16,8 @@ import type {
   SnapshotManifestEntry,
 } from "../../../lib/qa/schema";
 
-// NEW: đọc TagsList theo layout No + JA/JV
-import { parseTagsIndexFromWorkbook } from "../../../lib/qa/excel";
-
-/* =============================================================================
- * Types & helpers
- * ========================================================================== */
+// NEW: đọc TagsList + TF helpers
+import { parseTagsIndexFromWorkbook, isTFRow } from "../../../lib/qa/excel";
 
 type QuestionRow = {
   id?: string;
@@ -62,7 +27,7 @@ type QuestionRow = {
   examYear?: number | string;
   difficulty?: string;
   sourceNote?: string;
-  tags?: string | string[]; // "1;5;7" | "TK-1,TK-5"
+  tags?: string | string[];
 
   questionTextJA?: string;
   questionTextVI?: string;
@@ -81,9 +46,14 @@ type QuestionRow = {
   officialPosition?: string;
   cognitiveLevel?: string;
 
-  status?: string;                  // READY/DRAFT/...
+  status?: string;
   version?: number | string;
-  AnswerIsOption?: number | string; // 1..5 nếu dùng chỉ mục đáp án
+  AnswerIsOption?: number | string;
+
+  questionType?: string;
+  QuestionType?: string;
+  type?: string;
+  Type?: string;
 };
 
 type SubjectRow = Record<string, any>;
@@ -127,7 +97,8 @@ function hasAnyContent(q: Partial<QuestionRow>): boolean {
     "option4TextJA","option4TextVI","option4Image","option4IsAnswer",
     "option5TextJA","option5TextVI","option5Image","option5IsAnswer",
     "explanationGeneralJA","explanationGeneralVI","explanationImage",
-    "status","version","AnswerIsOption","tags","sourceNote"
+    "status","version","AnswerIsOption","tags","sourceNote",
+    "questionType","QuestionType","type","Type"
   ];
   return keys.some((k) => {
     const v = (q as any)[k];
@@ -193,16 +164,11 @@ function buildManifestIndex(entries: SnapshotManifestEntry[]) {
   return index;
 }
 
-/* =============================================================================
- * Component
- * ========================================================================== */
-
 type Tab = "publish" | "images";
 
 export default function AdminDataPage() {
   const [tab, setTab] = useState<Tab>("publish");
 
-  // Publish states
   const [fileName, setFileName] = useState<string>("");
   const [subjectsCount, setSubjectsCount] = useState<number>(0);
   const [questionsCount, setQuestionsCount] = useState<number>(0);
@@ -212,10 +178,8 @@ export default function AdminDataPage() {
   const [zipBlob, setZipBlob] = useState<Blob | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // cache OK rows cho Images
   const [okRowsCache, setOkRowsCache] = useState<QuestionRow[]>([]);
 
-  // Images Check states
   const [imgFiles, setImgFiles] = useState<FileList | null>(null);
   const [imgCourseId, setImgCourseId] = useState<string>("KTS2");
   const [missingList, setMissingList] = useState<string[]>([]);
@@ -231,32 +195,25 @@ export default function AdminDataPage() {
     setSubjectsCount(0); setQuestionsCount(0); setSkippedCount(0);
     setOkRowsCache([]);
 
-    // 1) read workbook
     const buf = await f.arrayBuffer();
     const wb = XLSX.read(buf);
 
-    // 2) subjects sheet
     const subjectsSheet = wb?.Sheets?.["Subjects"];
     const subjectsRows: SubjectRow[] = subjectsSheet
       ? (XLSX.utils.sheet_to_json(subjectsSheet, { defval: "" }) as SubjectRow[])
       : [];
 
-    // 3) questions sheet
     const wsQuestions = wb.Sheets["Questions"] ?? wb.Sheets["questions"] ?? {};
     const questionsRaw: QuestionRow[] = XLSX.utils.sheet_to_json<QuestionRow>(wsQuestions, { defval: "" });
 
-    // 3b) NEW: TagsList
-    const tagsIndex = parseTagsIndexFromWorkbook(wb); // {} if not exists
+    const tagsIndex = parseTagsIndexFromWorkbook(wb);
 
-    // 4) build subjects.json
     const subjectsJson: SubjectsJSON = buildSubjectsMeta(subjectsRows);
     setSubjectsCount(subjectsJson.items.length);
 
-    // 5) filter READY + normalize
     const ready = filterReadyRows(questionsRaw).map(normalizeQuestionRow);
     setSkippedCount(questionsRaw.length - ready.length);
 
-    // 6) build itemsForValidate (đủ để check số đáp án đúng)
     const itemsForValidate: QuestionForValidate[] = ready.map((q) => {
       const hasContent = (txt?: string, img?: string) =>
         (txt && txt.trim() !== "") || (img && img.trim() !== "");
@@ -279,10 +236,23 @@ export default function AdminDataPage() {
       };
     });
 
-    // 7) validate
     const v = validateQuestions(itemsForValidate);
+
+    // Suppress EMPTY_OPTIONS for TF
+    const tfIdSet = new Set<string>();
+    for (const r of ready) {
+      const idish = String(r.questionId ?? r.id ?? "").trim();
+      if (!idish) continue;
+      if (isTFRow(r)) tfIdSet.add(idish);
+    }
+    const filteredErrors = (v.errors ?? []).filter((e: any) => {
+      const idish = String(e.questionId ?? e.id ?? "").trim();
+      if (e.code === "EMPTY_OPTIONS" && tfIdSet.has(idish)) return false;
+      return true;
+    });
+
     setErrors(
-      v.errors.map((e: any) => {
+      filteredErrors.map((e: any) => {
         const idish = e.questionId ?? e.id ?? "?";
         const extra = "count" in e ? ` (count=${e.count})` : "";
         return `[${e.code}] Q${idish}${extra}: ${e.message}`;
@@ -293,23 +263,19 @@ export default function AdminDataPage() {
       return idish ? `[${w.code}] Q${idish}: ${w.message}` : `[${w.code}] ${w.message}`;
     }));
 
-    // 8) OK rows for export
-    const invalidIds = new Set((v.errors ?? []).map((e: any) => e.questionId ?? e.id).filter(Boolean));
+    const invalidIds = new Set(filteredErrors.map((e: any) => e.questionId ?? e.id).filter(Boolean));
     const okRows = ready.filter((q) => !invalidIds.has(q.questionId ?? q.id));
     setQuestionsCount(okRows.length);
     setOkRowsCache(okRows);
 
-    // 9) make ZIP
     const ts = Date.now();
     const zip = new JSZip();
 
     // subjects.json
     zip.file(`snapshots/subjects.json`, JSON.stringify(subjectsJson, null, 2));
 
-    // group rows
     const grouped = groupByCourseSubject(okRows);
 
-    // manifest
     const manifest: SnapshotManifest & { index?: any; tagsIndex?: any } = {
       version: ts,
       generatedAt: new Date(ts).toISOString(),
@@ -318,7 +284,6 @@ export default function AdminDataPage() {
 
     for (const [courseId, subMap] of grouped) {
       for (const [subjectId, list] of subMap) {
-        // map row -> QuestionSnapshotItem
         const items: QuestionSnapshotItem[] = list.map((r) => {
           const qid =
             r.questionId ??
@@ -328,21 +293,6 @@ export default function AdminDataPage() {
           const asNull = (v?: string) => (v && v.trim() !== "" ? v : null);
           const asStr = (v?: string) => (v ?? "");
           const ans = (i: 1 | 2 | 3 | 4 | 5) => !!toBool((r as any)[`option${i}IsAnswer`]);
-
-          // NEW: map tags → tagId[]
-          const rawTags = (r as any).tags ?? null;
-          let tagIds: string[] | null = null;
-          if (rawTags) {
-            const tokens = Array.isArray(rawTags)
-              ? rawTags
-              : String(rawTags).split(/[;,]/).map(s => s.trim()).filter(Boolean);
-            const ids: string[] = [];
-            for (const t of tokens) {
-              if (/^\d+$/.test(t)) { ids.push(`${subjectId}-${parseInt(t, 10)}`); continue; }      // "1" → "TK-1"
-              if (/^[A-Z]{1,4}-\d+$/i.test(t)) { ids.push(t.toUpperCase()); continue; }           // "TK-1"
-            }
-            if (ids.length) tagIds = ids;
-          }
 
           const out: QuestionSnapshotItem = {
             questionId: String(qid),
@@ -361,8 +311,8 @@ export default function AdminDataPage() {
             difficulty: (r.difficulty as any) ?? null,
             sourceNote: (r.sourceNote as any) ?? null,
 
-            tags: tagIds,
-            tagsText: rawTags ?? null,
+            tags: (r as any).tags ?? null,
+            tagsText: (r as any).tags ?? null,
 
             officialPosition: (r.officialPosition as any) ?? null,
             cognitiveLevel: (r.cognitiveLevel as any) ?? null,
@@ -402,7 +352,6 @@ export default function AdminDataPage() {
             option5ExplanationJA: asStr(r.option5ExplanationJA),
             option5ExplanationVI: asStr(r.option5ExplanationVI),
           };
-
           return out;
         });
 
@@ -412,7 +361,7 @@ export default function AdminDataPage() {
         const zipPath = `snapshots/${relativePath}`;
         zip.file(zipPath, JSON.stringify(items, null, 2));
 
-        // write alias latest (NEW from step A)
+        // write alias latest
         const latestZipPath = `snapshots/${courseId}/${subjectId}-questions.latest.json`;
         zip.file(latestZipPath, JSON.stringify(items, null, 2));
 
@@ -421,45 +370,30 @@ export default function AdminDataPage() {
       }
     }
 
-    // add index
-    (manifest as any).index = buildManifestIndex(manifest.files);
-    // add tagsIndex (NEW)
+    (manifest as any).index = (function buildIndex(entries: SnapshotManifestEntry[]) {
+      const index: Record<string, Record<string, { versions: { ts: number; path: string }[]; latest: { ts: number; path: string } }>> = {};
+      for (const e of entries) {
+        const { courseId, subjectId, version, path } = e;
+        index[courseId] ??= {};
+        index[courseId][subjectId] ??= { versions: [], latest: { ts: 0, path } };
+        index[courseId][subjectId].versions.push({ ts: version, path });
+        if (version >= index[courseId][subjectId].latest.ts) index[courseId][subjectId].latest = { ts: version, path };
+      }
+      return index;
+    })(manifest.files);
+
     (manifest as any).tagsIndex = tagsIndex;
 
-    // write manifest.json
     zip.file(`snapshots/manifest.json`, JSON.stringify(manifest, null, 2));
-
-    // publish.sh
-    const publishScript = `#!/usr/bin/env bash
-set -euo pipefail
-echo "[i] Adding snapshots..."
-git add public/snapshots
-echo "[i] Commit..."
-git commit -m "chore(snapshots): publish v${ts}"
-echo "[i] Push origin..."
-git push origin main
-if ! git remote | grep -q "^mirror$"; then
-  echo "[i] Remote 'mirror' chưa có. Thêm vào (sửa URL nếu cần):"
-  git remote add mirror https://github.com/arccuongdang/seiyo-academy-mirror
-fi
-echo "[i] Push mirror..."
-git push mirror main
-echo "[✓] Done."
-`;
-    zip.file(`publish.sh`, publishScript);
 
     const content = await zip.generateAsync({ type: "blob" });
     setZipBlob(content);
   }
 
-  function triggerFilePicker() {
-    inputRef.current?.click();
-  }
-  function downloadZip() {
-    if (zipBlob) saveAs(zipBlob, "snapshots_publish.zip");
-  }
+  function triggerFilePicker() { inputRef.current?.click(); }
+  function downloadZip() { if (zipBlob) saveAs(zipBlob, "snapshots_publish.zip"); }
 
-  // ===== Images Check (giữ nguyên) ==========================================
+  /* Images Check (như trước) */
   function onPickImages(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
     setImgFiles(files && files.length ? files : null);
@@ -487,30 +421,43 @@ echo "[✓] Done."
     }
     return expected;
   }
+  
   function handleCheckImages() {
     if (!okRowsCache.length) { alert("Upload Excel & Validate trước (tab Publish)."); return; }
     if (!imgFiles || imgFiles.length === 0) { alert("Hãy chọn thư mục ảnh (webkitdirectory)."); return; }
+
     const expected = makeExpectedList(okRowsCache, imgCourseId);
     const actual = new Set<string>();
     const actualList: string[] = [];
+
     for (const f of Array.from(imgFiles)) {
       const rel = (f as any).webkitRelativePath as string | undefined;
       const key = rel ? rel.replace(/^[/.]+/, "") : f.name;
-      actual.add(key); actualList.push(key);
+      actual.add(key);
+      actualList.push(key);
     }
+
     const missing = Array.from(expected).filter((k) => !actual.has(k)).sort();
     const unused = actualList
       .filter((k) => k.startsWith(`images/${imgCourseId}/`))
       .filter((k) => !expected.has(k))
       .sort();
-    setMissingList(missing); setUnusedList(unused);
 
-    const csvLines = ["type,path", ...missing.map(m => `missing,${m}`), ...unused.map(u => `unused,${u}`)];
-    setCsvBlob(new Blob([csvLines.join("\n")], { type: "text/csv;charset=utf-8" }));
+    setMissingList(missing);
+    setUnusedList(unused);
+
+    const csvLines = [
+      "type,path",
+      ...missing.map((m) => `missing,${m}`),
+      ...unused.map((u) => `unused,${u}`),
+    ];
+
+    setCsvBlob(
+      new Blob([csvLines.join("\\n")], { type: "text/csv;charset=utf-8" })
+    );
   }
-  function downloadCsv() {
-    if (csvBlob) saveAs(csvBlob, "images_check.csv");
-  }
+  
+  function downloadCsv() { if (csvBlob) saveAs(csvBlob, "images_check.csv"); }
 
   const canCheckImages = useMemo(() => !!okRowsCache.length, [okRowsCache]);
   const filePicked = !!fileName;
@@ -522,7 +469,6 @@ echo "[✓] Done."
         Bước 8: Excel → Validate → Publish snapshots (ZIP) &amp; Images Check (NO upload)
       </p>
 
-      {/* Tabs */}
       <div className="inline-flex rounded-lg border overflow-hidden">
         <button
           className={`px-3 py-2 text-sm ${tab === "publish" ? "bg-black text-white" : "bg-white"}`}
@@ -540,7 +486,6 @@ echo "[✓] Done."
 
       {tab === "publish" && (
         <>
-          {/* File picker */}
           <section className="space-y-3">
             <input ref={inputRef} type="file" accept=".xlsx,.xls,.xlsm" onChange={handleFile} className="hidden" />
             <button
@@ -552,7 +497,6 @@ echo "[✓] Done."
             </button>
           </section>
 
-          {/* Stats */}
           <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="rounded-lg border p-4">
               <div className="text-sm text-gray-500">Số môn (Subjects)</div>
@@ -568,7 +512,6 @@ echo "[✓] Done."
             </div>
           </section>
 
-          {/* Findings */}
           {(errors.length > 0 || warns.length > 0) && (
             <section className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="rounded-lg border p-4">
@@ -586,7 +529,6 @@ echo "[✓] Done."
             </section>
           )}
 
-          {/* Export */}
           <section className="space-y-2">
             <button
               onClick={downloadZip}
@@ -647,10 +589,6 @@ echo "[✓] Done."
               >
                 Tải CSV kết quả
               </button>
-            </div>
-
-            <div className="text-xs text-gray-500">
-              * Chọn thư mục gốc chứa <code>images/&lt;courseId&gt;/&lt;year&gt;/...</code>. Trình duyệt chỉ đọc đường dẫn tương đối, KHÔNG upload.
             </div>
           </section>
 
