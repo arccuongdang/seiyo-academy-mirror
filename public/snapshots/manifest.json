@@ -1,42 +1,504 @@
 {
-  "version": 1760310123083,
-  "generatedAt": "2025-10-13T00:00:00.000Z",
+  "version": 1761139477817,
+  "generatedAt": "2025-10-22T13:24:37.817Z",
   "files": [
     {
-      "path": "KTS2/TK-questions.v1760310123083.json",
+      "path": "KTS2/TK-questions.v1761139477817.json",
       "courseId": "KTS2",
       "subjectId": "TK",
-      "version": 1760310123083
+      "version": 1761139477817
     },
     {
-      "path": "KTS2/L-questions.v1760310123083.json",
+      "path": "KTS2/L-questions.v1761139477817.json",
       "courseId": "KTS2",
       "subjectId": "L",
-      "version": 1760310123083
+      "version": 1761139477817
     },
     {
-      "path": "KTS2/KC-questions.v1760310123083.json",
+      "path": "KTS2/KC-questions.v1761139477817.json",
       "courseId": "KTS2",
       "subjectId": "KC",
-      "version": 1760310123083
+      "version": 1761139477817
     },
     {
-      "path": "KTS2/TC-questions.v1760310123083.json",
+      "path": "KTS2/TC-questions.v1761139477817.json",
       "courseId": "KTS2",
       "subjectId": "TC",
-      "version": 1760310123083
+      "version": 1761139477817
     }
   ],
-
   "index": {
     "KTS2": {
       "TK": {
-        "versions": [{ "ts": 1760310123083, "path": "KTS2/TK-questions.v1760310123083.json" }],
-        "latest":   {"ts": 1760310123083, "path": "KTS2/TK-questions.v1760310123083.json" }
+        "versions": [
+          {
+            "ts": 1761139477817,
+            "path": "KTS2/TK-questions.v1761139477817.json"
+          }
+        ],
+        "latest": {
+          "ts": 1761139477817,
+          "path": "KTS2/TK-questions.v1761139477817.json"
+        }
       },
-      "L":  { "versions": [{ "ts": 1760310123083, "path": "KTS2/L-questions.v1760310123083.json" }],  "latest": { "ts": 1760310123083, "path": "KTS2/L-questions.v1760310123083.json" } },
-      "KC": { "versions": [{ "ts": 1760310123083, "path": "KTS2/KC-questions.v1760310123083.json" }], "latest": { "ts": 1760310123083, "path": "KTS2/KC-questions.v1760310123083.json" } },
-      "TC": { "versions": [{ "ts": 1760310123083, "path": "KTS2/TC-questions.v1760310123083.json" }], "latest": { "ts": 1760310123083, "path": "KTS2/TC-questions.v1760310123083.json" } }
+      "L": {
+        "versions": [
+          {
+            "ts": 1761139477817,
+            "path": "KTS2/L-questions.v1761139477817.json"
+          }
+        ],
+        "latest": {
+          "ts": 1761139477817,
+          "path": "KTS2/L-questions.v1761139477817.json"
+        }
+      },
+      "KC": {
+        "versions": [
+          {
+            "ts": 1761139477817,
+            "path": "KTS2/KC-questions.v1761139477817.json"
+          }
+        ],
+        "latest": {
+          "ts": 1761139477817,
+          "path": "KTS2/KC-questions.v1761139477817.json"
+        }
+      },
+      "TC": {
+        "versions": [
+          {
+            "ts": 1761139477817,
+            "path": "KTS2/TC-questions.v1761139477817.json"
+          }
+        ],
+        "latest": {
+          "ts": 1761139477817,
+          "path": "KTS2/TC-questions.v1761139477817.json"
+        }
+      }
+    }
+  },
+  "tagsIndex": {
+    "KTS2": {
+      "TK": [
+        {
+          "id": "TK-0",
+          "nameJA": "建築史",
+          "nameVI": "Lịch sử kiến trúc"
+        },
+        {
+          "id": "TK-1",
+          "nameJA": "用語と単位",
+          "nameVI": "Điều khoản và đơn vị"
+        },
+        {
+          "id": "TK-2",
+          "nameJA": "環境・気候・汚染",
+          "nameVI": "Môi trường, khí hậu và ô nhiễm"
+        },
+        {
+          "id": "TK-3",
+          "nameJA": "換気・通風",
+          "nameVI": "Thông gió và thông gió"
+        },
+        {
+          "id": "TK-4",
+          "nameJA": "伝熱",
+          "nameVI": "Truyền nhiệt"
+        },
+        {
+          "id": "TK-5",
+          "nameJA": "結露",
+          "nameVI": "ngưng tụ"
+        },
+        {
+          "id": "TK-6",
+          "nameJA": "日照・日射・日影・採光",
+          "nameVI": "Ánh sáng mặt trời, bức xạ mặt trời, bóng và ánh sáng"
+        },
+        {
+          "id": "TK-7",
+          "nameJA": "音響",
+          "nameVI": "âm thanh"
+        },
+        {
+          "id": "TK-8",
+          "nameJA": "色彩",
+          "nameVI": "màu"
+        },
+        {
+          "id": "TK-9",
+          "nameJA": "住宅一般",
+          "nameVI": "Tổng hợp nhà ở"
+        },
+        {
+          "id": "TK-10",
+          "nameJA": "集合住宅",
+          "nameVI": "Nhà ở nhiều gia đình"
+        },
+        {
+          "id": "TK-11",
+          "nameJA": "劇場・事務所・飲食店",
+          "nameVI": "Nhà hát, văn phòng, nhà hàng"
+        },
+        {
+          "id": "TK-12",
+          "nameJA": "図書館・学校・病院・美術館",
+          "nameVI": "Thư viện, trường học, bệnh viện và bảo tàng"
+        },
+        {
+          "id": "TK-13",
+          "nameJA": "その他の建築物",
+          "nameVI": "Các tòa nhà khác"
+        },
+        {
+          "id": "TK-14",
+          "nameJA": "各種建築物と用語",
+          "nameVI": "Các tòa nhà và điều khoản khác nhau"
+        },
+        {
+          "id": "TK-15",
+          "nameJA": "各部の設計",
+          "nameVI": "Thiết kế của từng bộ phận"
+        },
+        {
+          "id": "TK-16",
+          "nameJA": "給水・給湯設備",
+          "nameVI": "Thiết bị cấp nước và nước nóng"
+        },
+        {
+          "id": "TK-17",
+          "nameJA": "排水・衛生設備",
+          "nameVI": "Thoát nước và vệ sinh"
+        },
+        {
+          "id": "TK-18",
+          "nameJA": "電気・照明設備",
+          "nameVI": "Thiết bị điện và chiếu sáng"
+        },
+        {
+          "id": "TK-19",
+          "nameJA": "防災・消火設備",
+          "nameVI": "Thiết bị phòng chống thiên tai và chữa cháy"
+        },
+        {
+          "id": "TK-20",
+          "nameJA": "省エネルギー他",
+          "nameVI": "Tiết kiệm năng lượng, v.v."
+        }
+      ],
+      "L": [
+        {
+          "id": "L-0",
+          "nameJA": "用語の定義",
+          "nameVI": "Định nghĩa của các thuật ngữ"
+        },
+        {
+          "id": "L-1",
+          "nameJA": "面積、高さの算定",
+          "nameVI": "Tính toán diện tích và chiều cao"
+        },
+        {
+          "id": "L-2",
+          "nameJA": "手続き",
+          "nameVI": "thủ tục"
+        },
+        {
+          "id": "L-3",
+          "nameJA": "換気・その他の一般構造",
+          "nameVI": "Thông gió và các cấu trúc chung khác"
+        },
+        {
+          "id": "L-4",
+          "nameJA": "採光計算",
+          "nameVI": "Tính toán ánh sáng"
+        },
+        {
+          "id": "L-5",
+          "nameJA": "構造強度",
+          "nameVI": "Sức mạnh cấu trúc"
+        },
+        {
+          "id": "L-6",
+          "nameJA": "防火地域",
+          "nameVI": "Khu phòng cháy chữa cháy"
+        },
+        {
+          "id": "L-7",
+          "nameJA": "内装制限・避難規定",
+          "nameVI": "Hạn chế nội thất và quy định sơ tán"
+        },
+        {
+          "id": "L-8",
+          "nameJA": "道路・用途地域",
+          "nameVI": "Đường giao thông và khu vực sử dụng"
+        },
+        {
+          "id": "L-9",
+          "nameJA": "容積率の計算",
+          "nameVI": "Tính tỷ lệ diện tích sàn"
+        },
+        {
+          "id": "L-10",
+          "nameJA": "建蔽率の計算",
+          "nameVI": "Tính toán tỷ lệ bao phủ tòa nhà"
+        },
+        {
+          "id": "L-11",
+          "nameJA": "高さ制限",
+          "nameVI": "Giới hạn chiều cao"
+        },
+        {
+          "id": "L-12",
+          "nameJA": "その他の関係法令",
+          "nameVI": "Các luật và quy định khác có liên quan"
+        }
+      ],
+      "KC": [
+        {
+          "id": "KC-0",
+          "nameJA": "用語・単位",
+          "nameVI": "Thuật ngữ và đơn vị"
+        },
+        {
+          "id": "KC-1",
+          "nameJA": "荷重・外力",
+          "nameVI": "Tải trọng và ngoại lực"
+        },
+        {
+          "id": "KC-2",
+          "nameJA": "力のつりあい(はり)",
+          "nameVI": "Cân bằng quyền lực"
+        },
+        {
+          "id": "KC-3",
+          "nameJA": "力のつりあい(ラーメン他)",
+          "nameVI": "Cân bằng quyền lực (ramen, v.v.)"
+        },
+        {
+          "id": "KC-4",
+          "nameJA": "断面二次モーメントの値",
+          "nameVI": "Giá trị của mômen thứ cấp mặt cắt ngang"
+        },
+        {
+          "id": "KC-5",
+          "nameJA": "トラス",
+          "nameVI": "Truss"
+        },
+        {
+          "id": "KC-6",
+          "nameJA": "座屈",
+          "nameVI": "Băng ghế dự bị uốn cong"
+        },
+        {
+          "id": "KC-7",
+          "nameJA": "応力度",
+          "nameVI": "Trọng âm"
+        },
+        {
+          "id": "KC-8",
+          "nameJA": "木構造（用語・構造設計）",
+          "nameVI": "Kết cấu bằng gỗ (thuật ngữ và thiết kế kết cấu)"
+        },
+        {
+          "id": "KC-9",
+          "nameJA": "木構造（耐力壁）",
+          "nameVI": "Kết cấu bằng gỗ (tường chịu lực)"
+        },
+        {
+          "id": "KC-10",
+          "nameJA": "木構造（接合部）",
+          "nameVI": "Kết cấu bằng gỗ (khớp)"
+        },
+        {
+          "id": "KC-11",
+          "nameJA": "ＲＣ造(構造設計）",
+          "nameVI": "Xây dựng RC (thiết kế kết cấu)"
+        },
+        {
+          "id": "KC-12",
+          "nameJA": "ＲＣ造(配筋）",
+          "nameVI": "Xây dựng RC (gia cố)"
+        },
+        {
+          "id": "KC-13",
+          "nameJA": "ＲＣ造（壁式）・組積構造",
+          "nameVI": "Kết cấu RC (loại tường) / kết cấu xây"
+        },
+        {
+          "id": "KC-14",
+          "nameJA": "鉄骨構造（構造設計）",
+          "nameVI": "Kết cấu thép (thiết kế kết cấu)"
+        },
+        {
+          "id": "KC-15",
+          "nameJA": "鉄骨構造(溶接・接合部)",
+          "nameVI": "Kết cấu thép (Weld & Joint)"
+        },
+        {
+          "id": "KC-16",
+          "nameJA": "基礎構造",
+          "nameVI": "Cấu trúc cơ bản"
+        },
+        {
+          "id": "KC-17",
+          "nameJA": "構造計画",
+          "nameVI": "Quy hoạch kết cấu"
+        },
+        {
+          "id": "KC-18",
+          "nameJA": "木材",
+          "nameVI": "gỗ"
+        },
+        {
+          "id": "KC-19",
+          "nameJA": "セメント・コンクリート",
+          "nameVI": "Xi măng & bê tông"
+        },
+        {
+          "id": "KC-20",
+          "nameJA": "鋼材",
+          "nameVI": "thép"
+        },
+        {
+          "id": "KC-21",
+          "nameJA": "ガラス・ボード類",
+          "nameVI": "Kính và bảng"
+        },
+        {
+          "id": "KC-22",
+          "nameJA": "その他建築材料",
+          "nameVI": "Vật liệu xây dựng khác"
+        }
+      ],
+      "TC": [
+        {
+          "id": "TC-0",
+          "nameJA": "施工計画",
+          "nameVI": "Kế hoạch xây dựng"
+        },
+        {
+          "id": "TC-1",
+          "nameJA": "安全・材料管理",
+          "nameVI": "An toàn & Quản lý vật liệu"
+        },
+        {
+          "id": "TC-2",
+          "nameJA": "監理・手続き・調査",
+          "nameVI": "Giám sát, Thủ tục và Điều tra"
+        },
+        {
+          "id": "TC-3",
+          "nameJA": "仮設工事",
+          "nameVI": "Xây dựng tạm thời"
+        },
+        {
+          "id": "TC-4",
+          "nameJA": "土工事・基礎工事",
+          "nameVI": "Đào đắp và nền móng"
+        },
+        {
+          "id": "TC-5",
+          "nameJA": "鉄筋工事（加工・組立て）",
+          "nameVI": "Xây dựng cốt thép (gia công / lắp ráp)"
+        },
+        {
+          "id": "TC-6",
+          "nameJA": "鉄筋工事（定着・継手）",
+          "nameVI": "Xây dựng cốt thép (cố định và khớp)"
+        },
+        {
+          "id": "TC-7",
+          "nameJA": "型枠工事",
+          "nameVI": "Ván khuôn"
+        },
+        {
+          "id": "TC-8",
+          "nameJA": "コンクリート工事（打設）",
+          "nameVI": "Thi công bê tông (đổ)"
+        },
+        {
+          "id": "TC-9",
+          "nameJA": "コンクリート工事（調合・強度）",
+          "nameVI": "Xây dựng bê tông (trộn, cường độ)"
+        },
+        {
+          "id": "TC-10",
+          "nameJA": "鉄骨工事",
+          "nameVI": "Xây dựng kết cấu thép"
+        },
+        {
+          "id": "TC-11",
+          "nameJA": "コンクリートブロック工事",
+          "nameVI": "Thi công khối bê tông"
+        },
+        {
+          "id": "TC-12",
+          "nameJA": "木工事",
+          "nameVI": "Woodworking"
+        },
+        {
+          "id": "TC-13",
+          "nameJA": "防水・屋根工事",
+          "nameVI": "Công việc chống thấm và lợp mái"
+        },
+        {
+          "id": "TC-14",
+          "nameJA": "左官工事",
+          "nameVI": "Bên trái công trình chính thức"
+        },
+        {
+          "id": "TC-15",
+          "nameJA": "タイル工事",
+          "nameVI": "Xây dựng gạch"
+        },
+        {
+          "id": "TC-16",
+          "nameJA": "建具・ガラス工事",
+          "nameVI": "Đồ gỗ và công việc kính"
+        },
+        {
+          "id": "TC-17",
+          "nameJA": "塗装・吹付工事",
+          "nameVI": "Công việc sơn và phun"
+        },
+        {
+          "id": "TC-18",
+          "nameJA": "内装・断熱工事",
+          "nameVI": "Công việc nội thất và cách nhiệt"
+        },
+        {
+          "id": "TC-19",
+          "nameJA": "設備工事",
+          "nameVI": "Cấu tạo thiết bị"
+        },
+        {
+          "id": "TC-20",
+          "nameJA": "各種工事",
+          "nameVI": "Các tác phẩm đa dạng"
+        },
+        {
+          "id": "TC-21",
+          "nameJA": "施工法・施工機械",
+          "nameVI": "Phương pháp thi công và máy móc thi công"
+        },
+        {
+          "id": "TC-22",
+          "nameJA": "積算",
+          "nameVI": "phép cộng"
+        },
+        {
+          "id": "TC-23",
+          "nameJA": "測量",
+          "nameVI": "Khảo sát"
+        },
+        {
+          "id": "TC-24",
+          "nameJA": "契約・仕様書",
+          "nameVI": "Hợp đồng và thông số kỹ thuật"
+        }
+      ]
     }
   }
 }
