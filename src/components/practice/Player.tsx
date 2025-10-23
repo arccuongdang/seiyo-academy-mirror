@@ -4,6 +4,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getAuth } from 'firebase/auth';
+import { getFirestore, doc, getDoc } from 'firebase/firestore';
 import { createAttemptSession, updateAttemptSession, finalizeAttemptFromSession, upsertWrong } from '../../lib/analytics/attempts';
 import { loadRawQuestionsFor, loadSubjectsJson, findSubjectMeta, getCourseDisplayNameJA, getCourseDisplayNameVI } from '../../lib/qa/excel';
 import BilingualText from '../BilingualText';
@@ -116,6 +117,31 @@ export default function Player(props: {
   const [subjectJA, setSubjectJA] = useState<string>(subjectId);
   const [subjectVI, setSubjectVI] = useState<string>('');
 
+  async function computeAllowedSourceNotes(): Promise<Set<string>> {
+    try {
+      const auth = getAuth();
+      if (auth.currentUser) {
+        try {
+          const token = await auth.currentUser.getIdTokenResult();
+          if (token?.claims?.admin) return new Set(['A','B','C']);
+        } catch {}
+      }
+      const email = auth.currentUser?.email || '';
+      const uid = auth.currentUser?.uid || '';
+      const db = getFirestore();
+      const snap = await getDoc(doc(db, 'config/access/sourceNote'));
+      const data = (snap.exists() ? (snap.data() as any) : {}) || {};
+      const base: Set<string> = new Set([...(data.defaultAllowed || ['A'])]);
+      (data.allowByEmail?.[email] || []).forEach((x: string) => base.add(String(x).toUpperCase()));
+      (data.allowByUid?.[uid] || []).forEach((x: string) => base.add(String(x).toUpperCase()));
+      if (!base.size) base.add('A');
+      return base;
+    } catch {
+      return new Set(['A']);
+    }
+  }
+
+
   useEffect(() => {
     (async () => {
       try {
@@ -129,12 +155,40 @@ export default function Player(props: {
     })();
   }, [courseId, subjectId]);
 
+  async function getAllowedSourceNotes(): Promise<Set<string>> {
+    try {
+      const auth = getAuth();
+      if (auth.currentUser) {
+        try {
+          const token = await auth.currentUser.getIdTokenResult();
+          if (token?.claims?.admin) return new Set(['A','B','C']);
+        } catch {}
+      }
+      const email = auth.currentUser?.email || '';
+      const uid = auth.currentUser?.uid || '';
+      const db = getFirestore();
+      const snap = await getDoc(doc(db, 'config/access/sourceNote'));
+      const data = (snap.exists() ? (snap.data() as any) : {}) || {};
+      const base: Set<string> = new Set([...(data.defaultAllowed || ['A'])]);
+      (data.allowByEmail?.[email] || []).forEach((x: string) => base.add(String(x).toUpperCase()));
+      (data.allowByUid?.[uid] || []).forEach((x: string) => base.add(String(x).toUpperCase()));
+      if (!base.size) base.add('A');
+      return base;
+    } catch {
+      return new Set(['A']);
+    }
+  }
+
   useEffect(() => {
     setLoading(true); setErr(null);
     (async () => {
       try {
         const raws: RawSnap[] = await loadRawQuestionsFor(courseId, subjectId);
-        let rows = raws.map(toViewFromRaw);
+        const allowed = await computeAllowedSourceNotes();
+        const sourceMap = new Map<string, string>(raws.map(r => [String(r.id ?? r.questionId ?? ''), String(r.sourceNote ?? 'A').toUpperCase()]));
+        let rows = raws
+          .map(toViewFromRaw)
+          .filter(r => allowed.has(sourceMap.get(r.id) || 'A'));
 
         if (initialTags && initialTags.length) {
           rows = rows.filter(r => {
@@ -320,6 +374,12 @@ export default function Player(props: {
 
   return (
     <main style={{ padding: 24, maxWidth: 1000, margin: '0 auto' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10, fontSize: 12, opacity: 0.85 }}>
+        <span>範囲 / Phạm vi:</span>
+        <span style={{ padding: '2px 6px', border: '1px solid #e5e7eb', borderRadius: 6 }}>A: 過去問 / Đề cũ</span>
+        <span style={{ padding: '2px 6px', border: '1px solid #e5e7eb', borderRadius: 6 }}>B: 練習問題 / Đề luyện tập</span>
+        <span style={{ padding: '2px 6px', border: '1px solid #e5e7eb', borderRadius: 6 }}>C: 厳選問題 / Sít Rịt</span>
+      </div>
       {titleLine}
 
       {/* Thanh nhảy câu */}

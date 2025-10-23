@@ -3,6 +3,8 @@
 import React, { useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
+import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { saveAs } from "file-saver";
 
 // Libs (giữ nguyên theo dự án của bạn)
@@ -164,7 +166,7 @@ function buildManifestIndex(entries: SnapshotManifestEntry[]) {
   return index;
 }
 
-type Tab = "publish" | "images";
+type Tab = "publish" | "images" | "access";
 
 export default function AdminDataPage() {
   const [tab, setTab] = useState<Tab>("publish");
@@ -185,6 +187,13 @@ export default function AdminDataPage() {
   const [missingList, setMissingList] = useState<string[]>([]);
   const [unusedList, setUnusedList] = useState<string[]>([]);
   const [csvBlob, setCsvBlob] = useState<Blob | null>(null);
+  // Access Control states
+  const [emailsText, setEmailsText] = useState<string>('');
+  const [uidsText, setUidsText] = useState<string>('');
+  const [allowB, setAllowB] = useState<boolean>(true);
+  const [allowC, setAllowC] = useState<boolean>(true);
+  const [accessMsg, setAccessMsg] = useState<string>('');
+
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -608,6 +617,114 @@ export default function AdminDataPage() {
           </section>
         </>
       )}
+
+      {tab === "access" && (
+        <>
+          <section className="space-y-4">
+            <div className="text-sm text-gray-600">
+              Cấu hình quyền theo <code>sourceNote</code>:<br/>
+              <b>A</b> = 過去問 / Đề cũ ・ <b>B</b> = 練習問題 / Đề luyện tập ・ <b>C</b> = 厳選問題 / Sít Rịt
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="rounded-lg border p-4">
+                <div className="font-semibold mb-2">Emails (mỗi dòng 1 email)</div>
+                <textarea
+                  value={emailsText}
+                  onChange={(e) => setEmailsText(e.target.value)}
+                  placeholder="student1@example.com\nstudent2@example.com"
+                  className="w-full h-40 border rounded p-2 text-sm"
+                />
+              </div>
+              <div className="rounded-lg border p-4">
+                <div className="font-semibold mb-2">UIDs (mỗi dòng 1 UID)</div>
+                <textarea
+                  value={uidsText}
+                  onChange={(e) => setUidsText(e.target.value)}
+                  placeholder="uid_abc123\nuid_def456"
+                  className="w-full h-40 border rounded p-2 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={allowB} onChange={e => setAllowB(e.target.checked)} /> Allow B (練習問題)
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={allowC} onChange={e => setAllowC(e.target.checked)} /> Allow C (厳選問題)
+              </label>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={async () => {
+                  setAccessMsg('Đang tải...');
+                  try {
+                    const db = getFirestore();
+                    const ref = doc(db, 'config/access/sourceNote');
+                    const snap = await getDoc(ref);
+                    if (snap.exists()) {
+                      const data = snap.data() as any;
+                      const emails = Object.keys(data.allowByEmail || {});
+                      const uids = Object.keys(data.allowByUid || {});
+                      setEmailsText(emails.join('\n'));
+                      setUidsText(uids.join('\n'));
+                    } else {
+                      setEmailsText('');
+                      setUidsText('');
+                    }
+                    setAccessMsg('Đã tải cấu hình.');
+                  } catch (e: any) {
+                    setAccessMsg('Lỗi tải: ' + (e?.message || ''));
+                  }
+                }}
+                className="px-4 py-2 rounded border bg-white"
+              >
+                Tải cấu hình
+              </button>
+
+              <button
+                onClick={async () => {
+                  setAccessMsg('Đang lưu...');
+                  try {
+                    const toLines = (t: string) => t.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+                    const emails = toLines(emailsText);
+                    const uids = toLines(uidsText);
+                    const db = getFirestore();
+
+                    const allowByEmail: Record<string, ('B'|'C')[]> = {};
+                    const allowByUid: Record<string, ('B'|'C')[]> = {};
+                    const grants: ('B'|'C')[] = [];
+                    if (allowB) grants.push('B');
+                    if (allowC) grants.push('C');
+
+                    emails.forEach(em => allowByEmail[em] = grants.slice());
+                    uids.forEach(id => allowByUid[id] = grants.slice());
+
+                    const ref = doc(db, 'config/access/sourceNote');
+                    await setDoc(ref, {
+                      defaultAllowed: ['A'],
+                      allowByEmail,
+                      allowByUid
+                    }, { merge: true });
+
+                    setAccessMsg('Đã lưu.');
+                  } catch (e: any) {
+                    setAccessMsg('Lỗi lưu: ' + (e?.message || ''));
+                  }
+                }}
+                className="px-4 py-2 rounded bg-black text-white"
+              >
+                Lưu
+              </button>
+
+              {accessMsg && <div className="text-sm text-gray-600 self-center">{accessMsg}</div>}
+            </div>
+          </section>
+        </>
+      )}
+
     </main>
   );
 }
