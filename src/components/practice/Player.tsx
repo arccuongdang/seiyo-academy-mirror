@@ -1,6 +1,12 @@
 // src/components/practice/Player.tsx
 'use client';
 
+/** Player.tsx
+ * A/B/C filtering + detailed telemetry
+ * - Filters snapshot questions by Firestore allowlist (admin sees all via custom claim `admin`).
+ * - Records durationSec, per-answer guessed/confident flags, order mapping, and per-question tags.
+ */
+
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getAuth } from 'firebase/auth';
@@ -39,6 +45,7 @@ type ViewQuestion = {
   expectedMultiCount: number;
   guessed?: boolean;               // "適当に選んだ!"
   confident?: boolean;             // "回答は絶対これだ！"
+  tags?: string[];                  // tag ids per question (analytics)
 };
 
 function shuffledIndices(n: number): number[] {
@@ -59,6 +66,7 @@ function toViewFromRaw(raw: RawSnap) {
   const image = raw.questionImage ?? raw.ja?.image ?? raw.vi?.image ?? '';
   const examYear = Number(raw.examYear ?? raw.year ?? NaN);
 
+  const tags: string[] = Array.isArray(raw.tags) ? raw.tags as string[] : (typeof raw.tags === 'string' ? String(raw.tags).split(/[;,]/).map((s: string) => s.trim()).filter(Boolean) : []);
   const opts: Opt[] = [];
   for (let i = 1; i <= 6; i++) {
     const tJA = raw[`option${i}TextJA`];
@@ -78,7 +86,7 @@ function toViewFromRaw(raw: RawSnap) {
     });
   }
   const expectedMultiCount = opts.filter(o => o.isAnswer).length;
-  return { id, courseId, subjectId, textJA, textVI, image, options: opts, examYear, expectedMultiCount };
+  return { id, courseId, subjectId, textJA, textVI, image, options: opts, examYear, expectedMultiCount, tags };
 }
 
 function grade(selectedIndex: number | null, shownOptions: Opt[]) {
@@ -154,31 +162,6 @@ export default function Player(props: {
       } catch {}
     })();
   }, [courseId, subjectId]);
-
-  async function getAllowedSourceNotes(): Promise<Set<string>> {
-    try {
-      const auth = getAuth();
-      if (auth.currentUser) {
-        try {
-          const token = await auth.currentUser.getIdTokenResult();
-          if (token?.claims?.admin) return new Set(['A','B','C']);
-        } catch {}
-      }
-      const email = auth.currentUser?.email || '';
-      const uid = auth.currentUser?.uid || '';
-      const db = getFirestore();
-      const snap = await getDoc(doc(db, 'config/access/sourceNote'));
-      const data = (snap.exists() ? (snap.data() as any) : {}) || {};
-      const base: Set<string> = new Set([...(data.defaultAllowed || ['A'])]);
-      (data.allowByEmail?.[email] || []).forEach((x: string) => base.add(String(x).toUpperCase()));
-      (data.allowByUid?.[uid] || []).forEach((x: string) => base.add(String(x).toUpperCase()));
-      if (!base.size) base.add('A');
-      return base;
-    } catch {
-      return new Set(['A']);
-    }
-  }
-
   useEffect(() => {
     setLoading(true); setErr(null);
     (async () => {
@@ -219,6 +202,7 @@ export default function Player(props: {
             correctShownIndexes: g.correctIndexes,
             multiCorrect: g.multiCorrect,
             expectedMultiCount: r.expectedMultiCount,
+            tags: Array.isArray(r.tags) ? r.tags : [],
             guessed: false,
             confident: false,
           };
@@ -310,6 +294,7 @@ export default function Player(props: {
       isCorrect: !!q._isCorrectCalc,
       guessed: !!q.guessed,
       confident: !!q.confident,
+      questionTags: Array.isArray(q.tags) ? q.tags : [],
     }));
 
     const durationSec = startedAtMs ? Math.max(1, Math.round((Date.now() - startedAtMs) / 1000)) : 0;

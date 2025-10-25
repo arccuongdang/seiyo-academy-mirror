@@ -1,8 +1,10 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    /** ============================
+     *  Helper predicates
+     *  ============================ */
     function isSignedIn() {
       return request.auth != null;
     }
@@ -11,51 +13,80 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
-    // Minimal array check: Firestore rules don't support arrow functions / .every().
-    function isStringList(arr) {
-      return arr is list;
+    // Custom claim set by setAdmin.ts (admin:true)
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.admin == true;
     }
 
-    function isValidAttempt(d) {
-      return
-        (d.userId is string) &&
-        (d.courseId is string) &&
-        (d.subjectId is string) &&
-        (d.total is number && d.total >= 1) &&
-        (!('score' in d) || (d.score is number && d.score >= 0 && d.score <= d.total)) &&
-        (!('correct' in d) || (d.correct is number && d.correct >= 0 && d.correct <= d.total)) &&
-        (!('mode' in d) || (d.mode is string && (d.mode == 'subject' || d.mode == 'year'))) &&
-        (!('examYear' in d) || (d.examYear is number)) &&
-        (!('durationSec' in d) || (d.durationSec is number && d.durationSec >= 0)) &&
-        (!('tags' in d) || isStringList(d.tags));
+    /** ===============================================================
+     *  1) App configuration
+     *  --------------------------------------------------------------- */
+    match /config/{docPath=**} {
+      // User ĐĂNG NHẬP cần đọc để filter A/B/C trên client
+      allow read: if isSignedIn();
+      // Chỉ admin được ghi
+      allow write: if isAdmin();
     }
 
-    // User-scoped docs
+    /** ===============================================================
+     *  2) Hồ sơ người dùng + Attempts
+     *  --------------------------------------------------------------- */
     match /users/{uid} {
-      // Profile doc (optional)
-      allow read, write: if isOwner(uid);
 
-      // Attempt sessions (temporary state while practicing)
-      match /attemptSessions/{sid} {
-        allow read, write: if isOwner(uid);
-      }
+      // Chủ sở hữu đọc & cập nhật hồ sơ của CHÍNH MÌNH (nếu cần)
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid);
+      allow delete: if false;
 
-      // Finalized attempts (per-user subcollection)
+      // Attempts của chính chủ
       match /attempts/{aid} {
-        allow read: if isOwner(uid);
-        allow create: if isOwner(uid) && isValidAttempt(request.resource.data);
-        allow update, delete: if isOwner(uid) && isValidAttempt(request.resource.data);
+        // Tạo attempt: chỉ chính chủ + tối thiểu cấu trúc hợp lệ
+        allow create: if isOwner(uid)
+          && request.resource.data.answers is list
+          && request.resource.data.keys().hasAll([
+               'courseId','subjectId','examYear',
+               'startedAt','finishedAt','durationSec',
+               'answers'
+             ]);
+
+        // Đọc attempt: chính chủ hoặc admin
+        allow read: if isOwner(uid) || isAdmin();
+
+        // Không cho sửa/xoá attempt sau khi nộp
+        allow update, delete: if false;
       }
 
-      // Wrong / flagged questions by user
+      // Wrong/flagged các câu: chỉ chính chủ
       match /wrongs/{qid} {
         allow read, write: if isOwner(uid);
       }
+
+      // ✅ Catch-all: chặn mọi collection khác dưới users/{uid}
+      // (chỉ 1 glob duy nhất trong path → hợp lệ)
+      match /{path=**} {
+        allow read, write: if false;
+      }
     }
 
-    // (Optional, reserved) — root attempts collection for future global analytics.
-    // Disabled by default.
-    match /attempts/{id} {
+    /** ===============================================================
+     *  3) Khu vực dành riêng cho Admin
+     *  --------------------------------------------------------------- */
+    match /admin/{docPath=**} {
+      allow read, write: if isAdmin();
+    }
+
+    /** ===============================================================
+     *  4) (Tuỳ chọn) Enrollments
+     *  --------------------------------------------------------------- */
+    match /enrollments/{enrId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    /** ===============================================================
+     *  5) Mặc định: CHẶN tất cả
+     *  =============================================================== */
+    match /{document=**} {
       allow read, write: if false;
     }
   }

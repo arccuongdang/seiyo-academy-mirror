@@ -7,6 +7,15 @@ import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { saveAs } from "file-saver";
 
+// NEW: Images checker (chuẩn hoá theo 1 quy ước)
+import {
+  expectedForQuestion,
+  buildExpectedSet,
+  diffExpectedActual,
+  containsZuno,
+} from "../../../lib/images/checkMissing";
+
+
 // Libs (giữ nguyên theo dự án của bạn)
 import { buildSubjectsMeta } from "../../../lib/qa/normalize";
 import { validateQuestions } from "../../../lib/qa/guards";
@@ -260,6 +269,47 @@ export default function AdminDataPage() {
       return true;
     });
 
+    // --- EXTRA WARNINGS (post-validate) ---
+    // 1) 図の/図に mà không có questionImage -> cảnh báo
+    const zunoWarns: string[] = [];
+    for (const r of ready) {
+      const idish = String(r.questionId ?? r.id ?? "").trim();
+      if (!idish) continue;
+      if (containsZuno(r.questionTextJA, r.questionTextVI)) {
+        const hasImg = !!(r as any).questionImage && String((r as any).questionImage).trim() !== "";
+        if (!hasImg) zunoWarns.push(`[ZUNO_MISSING_IMAGE] Q${idish}: Có "図の/図に" nhưng thiếu ảnh đề (questionImage).`);
+      }
+    }
+
+    // 2) Multi-correct warn cho MCQ
+    const multiWarns: string[] = [];
+    for (const r of ready) {
+      const idish = String(r.questionId ?? r.id ?? "").trim();
+      if (!idish) continue;
+      // Bỏ qua TF
+      if (typeof r.questionType === "string" && r.questionType.trim().toUpperCase() === "TF") continue;
+
+      let cnt = 0;
+      for (let i = 1; i <= 5; i++) {
+        const b = (r as any)[`option${i}IsAnswer`];
+        if (b === true || String(b).trim().toLowerCase() === "true" || Number(b) === 1) cnt++;
+      }
+      if (cnt > 1) {
+        multiWarns.push(`[MULTI_CORRECT] Q${idish}: Có ${cnt} đáp án đúng (MCQ).`);
+      }
+    }
+
+    setWarns([
+      ...((v.warns ?? []).map((w: any) => {
+        const idish = w.questionId ?? w.id ?? "";
+        return idish ? `[${w.code}] Q${idish}: ${w.message}` : `[${w.code}] ${w.message}`;
+      })),
+      ...zunoWarns,
+      ...multiWarns
+    ]);
+
+
+
     setErrors(
       filteredErrors.map((e: any) => {
         const idish = e.questionId ?? e.id ?? "?";
@@ -408,50 +458,38 @@ export default function AdminDataPage() {
     setImgFiles(files && files.length ? files : null);
     setMissingList([]); setUnusedList([]); setCsvBlob(null);
   }
-  function normalizeImgKey(courseId: string, examYear: number | string, fileName: string) {
-    const y = String(examYear ?? "0000").trim();
-    const fname = String(fileName || "").trim();
-    return `images/${courseId}/${y}/${fname}`;
-  }
-  function makeExpectedList(rows: QuestionRow[], courseId: string) {
-    const expected = new Set<string>();
-    for (const r of rows) {
-      const qid = String(r.questionId ?? r.id ?? "").trim();
-      const year = Number(r.examYear) || 0;
-      if (!qid) continue;
-      const qImg = (r as any).questionImage as string | undefined;
-      if (qImg && qImg.trim() !== "") expected.add(normalizeImgKey(courseId, year, qImg));
-      else expected.add(normalizeImgKey(courseId, year, `${qid}_question.jpg`));
-      for (let i = 1; i <= 5; i++) {
-        const optImg = (r as any)[`option${i}Image`] as string | undefined;
-        if (optImg && optImg.trim() !== "") expected.add(normalizeImgKey(courseId, year, optImg));
-        else expected.add(normalizeImgKey(courseId, year, `${qid}_opt${i}.jpg`));
-      }
-    }
-    return expected;
-  }
   
   function handleCheckImages() {
     if (!okRowsCache.length) { alert("Upload Excel & Validate trước (tab Publish)."); return; }
     if (!imgFiles || imgFiles.length === 0) { alert("Hãy chọn thư mục ảnh (webkitdirectory)."); return; }
 
-    const expected = makeExpectedList(okRowsCache, imgCourseId);
-    const actual = new Set<string>();
-    const actualList: string[] = [];
+    // Chuẩn hoá thành MinimalQuestionRow theo quy ước ảnh
+    const rows = okRowsCache.map((r) => ({
+      questionId: String(r.questionId ?? r.id ?? "").trim(),
+      courseId: String(r.courseId ?? "KTS2"),
+      examYear: Number(r.examYear) || 0,
+      questionTextJA: (r as any).questionTextJA,
+      questionTextVI: (r as any).questionTextVI,
+      questionImage: (r as any).questionImage || undefined,
+      option1Image: (r as any).option1Image || undefined,
+      option2Image: (r as any).option2Image || undefined,
+      option3Image: (r as any).option3Image || undefined,
+      option4Image: (r as any).option4Image || undefined,
+      option5Image: (r as any).option5Image || undefined,
+      explanationImage: (r as any).explanationImage || undefined,
+    }));
 
+    const expected = buildExpectedSet(rows);
+
+    // Đọc danh sách file thực tế từ thư mục đã pick
+    const actualList: string[] = [];
     for (const f of Array.from(imgFiles)) {
       const rel = (f as any).webkitRelativePath as string | undefined;
       const key = rel ? rel.replace(/^[/.]+/, "") : f.name;
-      actual.add(key);
       actualList.push(key);
     }
 
-    const missing = Array.from(expected).filter((k) => !actual.has(k)).sort();
-    const unused = actualList
-      .filter((k) => k.startsWith(`images/${imgCourseId}/`))
-      .filter((k) => !expected.has(k))
-      .sort();
-
+    const { missing, unused } = diffExpectedActual(expected, actualList, imgCourseId);
     setMissingList(missing);
     setUnusedList(unused);
 
@@ -460,11 +498,11 @@ export default function AdminDataPage() {
       ...missing.map((m) => `missing,${m}`),
       ...unused.map((u) => `unused,${u}`),
     ];
-
-    setCsvBlob(
-      new Blob([csvLines.join("\\n")], { type: "text/csv;charset=utf-8" })
-    );
+    setCsvBlob(new Blob([csvLines.join("\\n")], { type: "text/csv;charset=utf-8" }));
   }
+
+  
+  
   
   function downloadCsv() { if (csvBlob) saveAs(csvBlob, "images_check.csv"); }
 
