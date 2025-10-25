@@ -34,6 +34,131 @@ type AttemptRow = {
   answers?: Array<{ questionId: string; pickedIndexes?: number[]; isCorrect?: boolean }>;
 };
 
+/**
+ * MyMiniDashboard (nhúng trực tiếp trong My Page)
+ * ------------------------------------------------------
+ * Hiển thị 2 biểu đồ:
+ *  - Line: số lần làm bài theo ngày (7/30/90/ALL)
+ *  - Bar: số lần theo từng (courseId/subjectId)
+ *
+ * Dùng lại helpers từ: src/lib/analytics/queries.ts
+ * Không tạo file mới: component này nằm chung trong file My Page.
+ */
+
+
+import { getAuth } from 'firebase/auth'
+import {
+  listAttemptsByUser,
+  aggregateDaily,
+  aggregateSubjects,
+  type AttemptDoc,
+} from '../../lib/analytics/queries'
+
+import {
+  ResponsiveContainer,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  BarChart, Bar,
+} from 'recharts'
+
+type Quick = '7d' | '30d' | '90d' | 'all'
+const subDays = (days: number) => { const d = new Date(); d.setDate(d.getDate() - days); return d }
+
+function MyMiniDashboard() {
+  // Preset khoảng thời gian
+  const [quick, setQuick] = useState<Quick>('30d')
+  const [loading, setLoading] = useState(false)
+
+  // Dữ liệu cho charts
+  const [daily, setDaily] = useState<any[]>([])
+  const [subjects, setSubjects] = useState<any[]>([])
+  const [attempts, setAttempts] = useState<AttemptDoc[]>([])
+
+  // Tính range theo preset
+  const range = useMemo(() => {
+    if (quick === 'all') return {}
+    const map: Record<Exclude<Quick,'all'>, number> = { '7d': 7, '30d': 30, '90d': 90 }
+    return { start: subDays(map[quick as Exclude<Quick,'all'>]) }
+  }, [quick])
+
+  // Tải attempts của user hiện tại và tổng hợp
+  useEffect(() => {
+    (async () => {
+      setLoading(true)
+      try {
+        const uid = getAuth().currentUser?.uid || ''
+        if (!uid) { setDaily([]); setSubjects([]); setAttempts([]); return }
+        const data = await listAttemptsByUser(uid, range)
+        setAttempts(data)
+        setDaily(aggregateDaily(data))
+        setSubjects(aggregateSubjects(data))
+      } finally { setLoading(false) }
+    })()
+  }, [quick])
+
+  return (
+    <section className="space-y-4">
+      {/* Header + Quick filter */}
+      <div className="flex items-center gap-3">
+        <h2 className="text-xl font-semibold">Tiến độ học của tôi</h2>
+        <div className="ml-auto inline-flex border rounded-lg overflow-hidden">
+          {(['7d','30d','90d','all'] as Quick[]).map(q => (
+            <button key={q}
+              className={'px-3 py-1 text-sm ' + (quick === q ? 'bg-black text-white' : 'bg-white')}
+              onClick={() => setQuick(q)}
+              title="Khoảng thời gian"
+            >{q.toUpperCase()}</button>
+          ))}
+        </div>
+      </div>
+
+      {loading && <div>Đang tải dữ liệu…</div>}
+
+      {!loading && (
+        <>
+          {/* (1) Line: attempts per day */}
+          <div className="rounded-lg border p-4">
+            <div className="font-medium mb-2">Số lần làm bài theo ngày</div>
+            <div style={{ width: '100%', height: 240 }}>
+              <ResponsiveContainer>
+                <LineChart data={daily}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" />
+                  <YAxis />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="attempts" name="Attempts/day" dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* (2) Bar: attempts per course/subject */}
+          <div className="rounded-lg border p-4">
+            <div className="font-medium mb-2">Theo môn / khoá (số lần)</div>
+            <div style={{ width: '100%', height: 240 }}>
+              <ResponsiveContainer>
+                <BarChart data={subjects}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="key" />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="attempts" name="Attempts" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Tóm tắt nhanh */}
+          <div className="text-sm text-gray-600">
+            Tổng lần làm trong giai đoạn: <b>{attempts.length}</b>
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
+
+
 export default function MyPageClient() {
   const [loading, setLoading] = useState(true);
   const [attempts, setAttempts] = useState<AttemptRow[]>([]);
@@ -173,6 +298,7 @@ export default function MyPageClient() {
       </section>
 
       <RecentAttempts latest5={latest5} formatDate={formatDate} />
+      <MyMiniDashboard />
     </main>
   );
 }
@@ -268,3 +394,5 @@ function RecentAttempts({
     </section>
   );
 }
+
+
