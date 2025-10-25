@@ -1,127 +1,76 @@
 // src/app/admin/analytics/page.tsx
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { getAuth } from 'firebase/auth'
-import { listAttemptsByUser, fetchAllAnalyticsViaCF, type AttemptDoc } from '@/lib/analytics/queries'
-
-// Import trực tiếp Recharts để TS khớp props, tránh lỗi TS2769
+import {
+  listAttemptsByUser, fetchAllAnalyticsViaCF, type AttemptDoc,
+  aggregateDaily, aggregateSubjects, aggregateWrongTags, toJSDate
+} from '@/lib/analytics/queries'
 import {
   ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  BarChart,
-  Bar,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  BarChart, Bar,
 } from 'recharts'
 
-function avg(arr: number[]) {
-  return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0
-}
+type Mode = 'me' | 'all'
+type Quick = '7d' | '30d' | '90d' | 'all'
+
+function subDays(days: number): Date { const d = new Date(); d.setDate(d.getDate() - days); return d }
 
 export default function AdminAnalyticsPage() {
-  const [mode, setMode] = useState<'me' | 'all'>('me')
+  const [mode, setMode] = useState<Mode>('me')
+  const [quick, setQuick] = useState<Quick>('30d')
   const [loading, setLoading] = useState(false)
   const [attempts, setAttempts] = useState<AttemptDoc[]>([])
   const [daily, setDaily] = useState<any[]>([])
   const [subjects, setSubjects] = useState<any[]>([])
   const [tags, setTags] = useState<any[]>([])
 
+  const range = useMemo(() => {
+    if (quick === 'all') return {}
+    const map: Record<Exclude<Quick, 'all'>, number> = { '7d': 7, '30d': 30, '90d': 90 }
+    return { start: subDays(map[quick as Exclude<Quick, 'all'>]) }
+  }, [quick])
+
   useEffect(() => {
     (async () => {
       setLoading(true)
       try {
-        const uid = getAuth().currentUser?.uid || ''
-        if (mode === 'me' && uid) {
-          const data = await listAttemptsByUser(uid)
+        if (mode === 'me') {
+          const uid = getAuth().currentUser?.uid || ''
+          if (!uid) { setAttempts([]); setDaily([]); setSubjects([]); setTags([]); return }
+          const data = await listAttemptsByUser(uid, range)
           setAttempts(data)
-
-          // --- Daily aggregates ---
-          const by: Record<string, AttemptDoc[]> = {}
-          for (const a of data) {
-            const d = (a.createdAt?.toDate?.() as Date) || new Date()
-            const k = d.toISOString().slice(0, 10)
-            ;(by[k] = by[k] || []).push(a)
-          }
-          const dailyRows = Object.entries(by)
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([date, arr]) => {
-              const scores = arr.map(x => (typeof x.score === 'number' ? x.score : (x.correct ?? 0)))
-              const pcts = arr.map((x, i) => (x.total > 0 ? scores[i] / x.total : 0))
-              const durs = arr.map(x => x.durationSec ?? 0)
-              return { date, attempts: arr.length, avgScore: avg(scores), avgPct: avg(pcts), avgDuration: avg(durs) }
-            })
-          setDaily(dailyRows)
-
-          // --- Subject breakdown ---
-          const sub: Record<string, { n: number; sumPct: number }> = {}
-          for (const a of data) {
-            const key = `${a.courseId}/${a.subjectId}`
-            const score = typeof a.score === 'number' ? a.score : (a.correct ?? 0)
-            const pct = a.total > 0 ? score / a.total : 0
-            const bucket = (sub[key] = sub[key] || { n: 0, sumPct: 0 })
-            bucket.n += 1
-            bucket.sumPct += pct
-          }
-          setSubjects(
-            Object.entries(sub)
-              .map(([key, v]) => ({ key, attempts: v.n, avgPct: v.sumPct / v.n }))
-              .sort((a, b) => b.attempts - a.attempts)
-          )
-
-          // --- Top wrong tags ---
-          const counter: Record<string, number> = {}
-          for (const a of data) {
-            const ans = Array.isArray(a.answers) ? a.answers : []
-            const atags = Array.isArray(a.tags) ? a.tags : []
-            for (const it of ans) {
-              if (it.isCorrect) continue
-              const qtags = Array.isArray(it.questionTags) ? it.questionTags : atags
-              for (const t of qtags) counter[t] = (counter[t] || 0) + 1
-            }
-          }
-          setTags(
-            Object.entries(counter)
-              .map(([tag, wrongs]) => ({ tag, wrongs }))
-              .sort((a, b) => b.wrongs - a.wrongs)
-              .slice(0, 20)
-          )
+          setDaily(aggregateDaily(data))
+          setSubjects(aggregateSubjects(data))
+          setTags(aggregateWrongTags(data, 20))
         } else {
-          // All users via Cloud Function (requires admin claim)
-          const res = await fetchAllAnalyticsViaCF({})
-          setDaily(res.daily)
-          setSubjects(res.subjects)
-          setTags(res.tags)
+          const res = await fetchAllAnalyticsViaCF(range)
+          setDaily(res.daily || [])
+          setSubjects(res.subjects || [])
+          setTags(res.tags || [])
           setAttempts(res.recent || [])
         }
-      } finally {
-        setLoading(false)
-      }
+      } finally { setLoading(false) }
     })()
-  }, [mode])
+  }, [mode, quick])
 
   return (
     <main className="p-6 space-y-6">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <h1 className="text-2xl font-bold">Analytics Dashboard</h1>
         <div className="ml-auto inline-flex border rounded-lg overflow-hidden">
-          <button
-            className={`px-3 py-1 text-sm ${mode === 'me' ? 'bg-black text-white' : 'bg-white'}`}
-            onClick={() => setMode('me')}
-            title="Chỉ dữ liệu của tôi (được phép theo rules hiện tại)"
-          >
-            My data
-          </button>
-          <button
-            className={`px-3 py-1 text-sm ${mode === 'all' ? 'bg-black text-white' : 'bg-white'}`}
-            onClick={() => setMode('all')}
-            title="Toàn hệ thống (cần admin claim + Cloud Function)"
-          >
-            All users
-          </button>
+          <button className={'px-3 py-1 text-sm ' + (mode === 'me' ? 'bg-black text-white' : 'bg-white')}
+            onClick={() => setMode('me')}>My data</button>
+          <button className={'px-3 py-1 text-sm ' + (mode === 'all' ? 'bg-black text-white' : 'bg-white')}
+            onClick={() => setMode('all')}>All users</button>
+        </div>
+        <div className="inline-flex border rounded-lg overflow-hidden">
+          {(['7d','30d','90d','all'] as Quick[]).map(q => (
+            <button key={q} className={'px-3 py-1 text-sm ' + (quick === q ? 'bg-black text-white' : 'bg-white')}
+              onClick={() => setQuick(q)}>{q.toUpperCase()}</button>
+          ))}
         </div>
       </div>
 
@@ -129,7 +78,6 @@ export default function AdminAnalyticsPage() {
 
       {!loading && (
         <>
-          {/* Daily progress */}
           <section className="rounded-lg border p-4">
             <div className="font-semibold mb-2">Tiến độ theo ngày</div>
             <div style={{ width: '100%', height: 280 }}>
@@ -146,7 +94,6 @@ export default function AdminAnalyticsPage() {
             </div>
           </section>
 
-          {/* Subject breakdown */}
           <section className="rounded-lg border p-4">
             <div className="font-semibold mb-2">Phân rã theo môn / khoá</div>
             <div style={{ width: '100%', height: 280 }}>
@@ -162,7 +109,6 @@ export default function AdminAnalyticsPage() {
             </div>
           </section>
 
-          {/* Top wrong tags */}
           <section className="rounded-lg border p-4">
             <div className="font-semibold mb-2">Tag sai nhiều nhất</div>
             <div style={{ width: '100%', height: 280 }}>
@@ -175,6 +121,38 @@ export default function AdminAnalyticsPage() {
                   <Bar dataKey="wrongs" name="Wrongs" />
                 </BarChart>
               </ResponsiveContainer>
+            </div>
+          </section>
+
+          <section className="rounded-lg border p-4">
+            <div className="font-semibold mb-2">Lần làm gần đây</div>
+            <div className="overflow-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="text-left border-b">
+                    <th className="py-1 pr-3">Date</th>
+                    <th className="py-1 pr-3">Course/Subject</th>
+                    <th className="py-1 pr-3">Total</th>
+                    <th className="py-1 pr-3">% Correct</th>
+                    <th className="py-1 pr-3">Duration (s)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attempts.slice(0, 20).map((a) => {
+                    const d = toJSDate(a.createdAt)
+                    const pct = a.total > 0 ? Math.round(((a.score ?? a.correct ?? 0) / a.total) * 100) : 0
+                    return (
+                      <tr key={a.id || d.getTime()} className="border-b">
+                        <td className="py-1 pr-3">{d.toISOString().slice(0, 19).replace('T',' ')}</td>
+                        <td className="py-1 pr-3">{a.courseId}/{a.subjectId}</td>
+                        <td className="py-1 pr-3">{a.total}</td>
+                        <td className="py-1 pr-3">{pct}%</td>
+                        <td className="py-1 pr-3">{a.durationSec ?? '-'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           </section>
         </>
